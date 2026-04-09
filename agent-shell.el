@@ -5269,13 +5269,13 @@ Returns list of alists with :start, :end, and :path for each mention."
                         (mimeType . ,(map-elt file :mime-type))
                         (uri . ,(concat "file://" resolved-path)))
                       content-blocks))
-               ;; Text file, small enough, text file capabilities granted and embeddedContext supported
+               ;; Small enough, text file capabilities granted and embeddedContext supported
                ;; Use ContentBlock::Resource
                ((and agent-shell-text-file-capabilities supports-embedded-context (map-elt file :size)
                      (< (map-elt file :size) agent-shell-embed-file-size-limit))
                 (push `((type . "resource")
                         (resource . ((uri . ,(concat "file://" resolved-path))
-                                     (text . ,(map-elt file :content))
+                                     (,(if (map-elt file :base64-p) 'blob 'text) . ,(map-elt file :content))
                                      (mimeType . ,(map-elt file :mime-type)))))
                       content-blocks))
                ;; File too large, no text file capabilities granted or embeddedContext not supported
