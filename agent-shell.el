@@ -2358,22 +2358,21 @@ DIFF should be in the form returned by `agent-shell--make-diff-info':
   "Clean up resources.
 
 For example, shut down ACP client."
-  (unless (derived-mode-p 'agent-shell-mode)
-    (error "Not in a shell"))
-  (agent-shell--cancel-idle-timer)
-  (agent-shell--emit-event :event 'clean-up)
-  (agent-shell--shutdown)
-  ;; Kill any open diff buffers associated with tool calls.
-  (map-do (lambda (_tool-call-id tool-call-data)
-            (when-let ((diff-buf (map-elt tool-call-data :diff-buffer)))
-              (agent-shell-diff-kill-buffer diff-buf)))
-          (map-elt (agent-shell--state) :tool-calls))
-  (when-let (((map-elt (agent-shell--state) :buffer))
-             (viewport-buffer (agent-shell-viewport--buffer
-                               :shell-buffer (map-elt (agent-shell--state) :buffer)
-                               :existing-only t))
-             (buffer-live-p viewport-buffer))
-    (kill-buffer viewport-buffer)))
+  (when (derived-mode-p 'agent-shell-mode)
+    (agent-shell--cancel-idle-timer)
+    (agent-shell--emit-event :event 'clean-up)
+    (agent-shell--shutdown)
+    ;; Kill any open diff buffers associated with tool calls.
+    (map-do (lambda (_tool-call-id tool-call-data)
+              (when-let ((diff-buf (map-elt tool-call-data :diff-buffer)))
+                (agent-shell-diff-kill-buffer diff-buf)))
+            (map-elt (agent-shell--state) :tool-calls))
+    (when-let (((map-elt (agent-shell--state) :buffer))
+               (viewport-buffer (agent-shell-viewport--buffer
+                                 :shell-buffer (map-elt (agent-shell--state) :buffer)
+                                 :existing-only t))
+               (buffer-live-p viewport-buffer))
+      (kill-buffer viewport-buffer))))
 
 (defun agent-shell--shutdown ()
   "Shut down shell activity."
