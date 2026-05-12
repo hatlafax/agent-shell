@@ -984,13 +984,14 @@ Works from both shell and viewport buffers."
                        'new-deferred
                      'new))
          (config (map-elt (buffer-local-value 'agent-shell--state shell-buffer)
-                          :agent-config)))
+                          :agent-config))
+         (shell-dir (buffer-local-value 'default-directory shell-buffer)))
     (with-current-buffer shell-buffer
       (when (and (agent-shell--active-requests-p (agent-shell--state))
                  (not (y-or-n-p "Agent is busy.  Restart anyway?")))
         (user-error "Cancelled")))
     (kill-buffer shell-buffer)
-    (let* ((default-directory (buffer-local-value 'default-directory shell-buffer))
+    (let* ((default-directory shell-dir)
            (new-shell-buffer (agent-shell--start
                               :config config
                               :session-strategy strategy
