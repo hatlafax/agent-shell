@@ -1807,6 +1807,9 @@ COMMAND, when present, may be a shell command string or an argv vector."
             :state state
             :acp-config-options (map-nested-elt acp-notification '(params update configOptions)))
            (agent-shell--update-header-and-mode-line)
+           (agent-shell--emit-event
+            :event 'config-option-update
+            :data (list (cons :config-options (agent-shell--config-options state))))
            ;; Note: No need to set :last-entry-type as no text was inserted.
            nil)
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "usage_update")
@@ -3770,6 +3773,8 @@ Initialization events (emitted in order):
 Session events:
   `tool-call-update'      - Tool call started or updated
     :data contains :tool-call-id and :tool-call
+  `config-option-update'  - ACP config option(s) changed (e.g., by another client)
+    :data contains :config-options (normalized list)
   `file-write'            - File written via fs/write_text_file
     :data contains :path and :content
   `permission-request'    - Permission prompt displayed to user
