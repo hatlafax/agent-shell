@@ -615,8 +615,33 @@ With EXISTING-ONLY, only return existing buffers without creating."
               (current-buffer))))))))
 
 (defun agent-shell-viewport--block-quote (text)
-  "Prefix each line of TEXT with \"> \"."
-  (concat "> " (replace-regexp-in-string "\n" "\n> " text)))
+  "Return TEXT with each line prefixed by \"> \", displayed as a bar.
+
+Underlying text keeps the \"> \" so it remains valid markdown;
+the bar is a display-only override.  Yanks strip both the bar
+styling and the leading \"> \" so paste gives plain text."
+  (let* ((bar      (propertize "▌" 'face 'font-lock-comment-face))
+         (wrap     (propertize "▌ " 'face 'font-lock-comment-face))
+         (quoted   (concat "> " (replace-regexp-in-string
+                                 (rx "\n") "\n> " text)))
+         (rendered (copy-sequence quoted))
+         (pos      0))
+    (add-text-properties
+     0 (length rendered)
+     (list 'wrap-prefix wrap
+           'face 'font-lock-comment-face
+           'yank-handler
+           (list (lambda (s)
+                   (insert
+                    (replace-regexp-in-string
+                     (rx line-start "> ") ""
+                     (substring-no-properties s))))))
+     rendered)
+    (while (string-match (rx line-start ">") rendered pos)
+      (put-text-property (match-beginning 0) (match-end 0)
+                         'display bar rendered)
+      (setq pos (match-end 0)))
+    rendered))
 
 (cl-defun agent-shell-viewport--setup-reply (&key quoted-text)
   "Set up the buffer to compose a reply.
