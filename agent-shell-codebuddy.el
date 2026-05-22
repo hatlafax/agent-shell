@@ -63,11 +63,11 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :buffer-name "CodeBuddy"
    :shell-prompt "CodeBuddy> "
    :shell-prompt-regexp "CodeBuddy> "
-   :icon-name nil
+   :icon-name "codebuddy.png"
    :welcome-function #'agent-shell-codebuddy--welcome-message
    :client-maker (lambda (buffer)
                    (agent-shell-codebuddy-make-client :buffer buffer))
-   :install-instructions "Install the CodeBuddy CLI and ensure it supports ACP mode (for example, `codebuddy --acp`)."))
+   :install-instructions "Install the CodeBuddy CLI and ensure it supports ACP mode (for example, `codebuddy --acp`). See https://www.codebuddy.ai/docs/zh/ide/Getting-Started/Installation for installation."))
 
 (defun agent-shell-codebuddy-start-agent ()
   "Start an interactive CodeBuddy agent shell."

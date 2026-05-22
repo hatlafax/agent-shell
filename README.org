@@ -135,6 +135,8 @@ For example:
 codebuddy --acp
 #+end_src
 
+See https://www.codebuddy.ai/docs/zh/ide/Getting-Started/Installation for details.
+
 *** Kiro CLI
 
 For Kiro CLI, install with:
