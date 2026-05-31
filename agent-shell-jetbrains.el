@@ -128,7 +128,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :buffer-name "Junie"
    :shell-prompt "Junie> "
    :shell-prompt-regexp "Junie> "
-   :icon-name "robot.png"
+   :icon-name "junie.png"
    :welcome-function #'agent-shell-jetbrains--junie-welcome-message
    :needs-authentication (not (map-elt agent-shell-jetbrains-authentication :none))
    :authenticate-request-maker (lambda ()
