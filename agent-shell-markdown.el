@@ -1811,7 +1811,7 @@ Returns nil when point isn't inside a rendered agent-shell-markdown
 table.  Navigable cells are tagged by the renderer with the
 `agent-shell-markdown-table-cell-start' text property, so separator rows
 and continuation lines of wrapped rows are skipped automatically."
-  (when-let ((region (agent-shell-markdown-table--region-at-point)))
+  (when-let* ((region (agent-shell-markdown-table--region-at-point)))
     (let ((positions nil))
       (save-excursion
         (save-restriction
@@ -1925,7 +1925,7 @@ is consulted for aliases before the `-mode' suffix is appended."
 (defun agent-shell-markdown--open-local-link (url)
   "Open URL as a local file link if possible.
 Return non-nil if handled, nil otherwise."
-  (when-let ((parsed (agent-shell-markdown--parse-local-link url)))
+  (when-let* ((parsed (agent-shell-markdown--parse-local-link url)))
     (find-file (car parsed))
     (when (cdr parsed)
       (goto-char (point-min))
@@ -1944,45 +1944,45 @@ For example:
   \"file:src/bar.el:5\"      => (\"/abs/src/bar.el\" . 5)
   \"file:///tmp/baz.el#L20\" => (\"/tmp/baz.el\" . 20)
   \"https://example.com\"    => nil"
-  (when-let ((match
-              (cond
-               ((string-match
-                 (rx bos "file://"
-                     (group (+? anything))
-                     (optional (or (seq "#L" (group (one-or-more digit)))
-                                   (seq ":" (group (one-or-more digit)))))
-                     eos)
-                 url)
-                (cons (match-string 1 url)
-                      (or (match-string 2 url) (match-string 3 url))))
-               ((string-match
-                 (rx bos "file:"
-                     (group (not (any "/")) (+? anything))
-                     (optional (or (seq "#L" (group (one-or-more digit)))
-                                   (seq ":" (group (one-or-more digit)))))
-                     eos)
-                 url)
-                (cons (match-string 1 url)
-                      (or (match-string 2 url) (match-string 3 url))))
-               ((string-match
-                 (rx bos
-                     (group (? (optional "/") alpha ":/")
-                            (one-or-more (not (any ":#"))))
-                     "#L" (group (one-or-more digit))
-                     eos)
-                 url)
-                (cons (match-string 1 url) (match-string 2 url)))
-               ((string-match
-                 (rx bos
-                     (group (? (optional "/") alpha ":/")
-                            (one-or-more (not (any ":#"))))
-                     ":" (group (one-or-more digit))
-                     eos)
-                 url)
-                (cons (match-string 1 url) (match-string 2 url)))
-               ((not (string-empty-p url))
-                (cons url nil))))
-             (filepath (expand-file-name (car match))))
+  (when-let* ((match
+               (cond
+                ((string-match
+                  (rx bos "file://"
+                      (group (+? anything))
+                      (optional (or (seq "#L" (group (one-or-more digit)))
+                                    (seq ":" (group (one-or-more digit)))))
+                      eos)
+                  url)
+                 (cons (match-string 1 url)
+                       (or (match-string 2 url) (match-string 3 url))))
+                ((string-match
+                  (rx bos "file:"
+                      (group (not (any "/")) (+? anything))
+                      (optional (or (seq "#L" (group (one-or-more digit)))
+                                    (seq ":" (group (one-or-more digit)))))
+                      eos)
+                  url)
+                 (cons (match-string 1 url)
+                       (or (match-string 2 url) (match-string 3 url))))
+                ((string-match
+                  (rx bos
+                      (group (? (optional "/") alpha ":/")
+                             (one-or-more (not (any ":#"))))
+                      "#L" (group (one-or-more digit))
+                      eos)
+                  url)
+                 (cons (match-string 1 url) (match-string 2 url)))
+                ((string-match
+                  (rx bos
+                      (group (? (optional "/") alpha ":/")
+                             (one-or-more (not (any ":#"))))
+                      ":" (group (one-or-more digit))
+                      eos)
+                  url)
+                 (cons (match-string 1 url) (match-string 2 url)))
+                ((not (string-empty-p url))
+                 (cons url nil))))
+              (filepath (expand-file-name (car match))))
     (when (file-exists-p filepath)
       (cons filepath
             (when (cdr match)

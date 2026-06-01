@@ -158,12 +158,12 @@ Example -- auto-approve reads:
 
   (setq agent-shell-permission-responder-function
         (lambda (permission)
-          (when-let (((equal (map-elt (map-elt permission :tool-call) :kind)
+          (when-let* (((equal (map-elt (map-elt permission :tool-call) :kind)
                              \"read\"))
-                     (choice (seq-find
-                               (lambda (option)
-                                 (equal (map-elt option :kind) \"allow_once\"))
-                               (map-elt permission :options))))
+                      (choice (seq-find
+                                (lambda (option)
+                                  (equal (map-elt option :kind) \"allow_once\"))
+                                (map-elt permission :options))))
             (funcall (map-elt permission :respond)
                      (map-elt choice :option-id))
             t)))")
@@ -177,9 +177,9 @@ Example:
 
   (setq agent-shell-permission-responder-function
         #\\='agent-shell-permission-allow-always)"
-  (when-let ((choice (seq-find
-                      (lambda (option) (equal (map-elt option :kind) "allow_once"))
-                      (map-elt permission :options))))
+  (when-let* ((choice (seq-find
+                       (lambda (option) (equal (map-elt option :kind) "allow_once"))
+                       (map-elt permission :options))))
     (funcall (map-elt permission :respond)
              (map-elt choice :option-id))
     t))
@@ -1237,12 +1237,12 @@ Includes shells accessed via viewport buffers, preserving visited order."
   (let (shell-buffers seen)
     (dolist (buffer (buffer-list))
       (with-current-buffer buffer
-        (when-let ((shell-buffer
-                    (cond ((derived-mode-p 'agent-shell-mode)
-                           buffer)
-                          ((or (derived-mode-p 'agent-shell-viewport-view-mode)
-                               (derived-mode-p 'agent-shell-viewport-edit-mode))
-                           (agent-shell-viewport--shell-buffer buffer)))))
+        (when-let* ((shell-buffer
+                     (cond ((derived-mode-p 'agent-shell-mode)
+                            buffer)
+                           ((or (derived-mode-p 'agent-shell-viewport-view-mode)
+                                (derived-mode-p 'agent-shell-viewport-edit-mode))
+                            (agent-shell-viewport--shell-buffer buffer)))))
           (unless (memq shell-buffer seen)
             (push shell-buffer seen)
             (push shell-buffer shell-buffers)))))
@@ -1261,9 +1261,9 @@ Includes shells accessed via viewport buffers, preserving visited order."
                                 :no-create t)
                                "No shell available")))
         ((derived-mode-p 'agent-shell-mode)
-         (when-let ((viewport-buffer (or (agent-shell-viewport--buffer
-                                          :shell-buffer (current-buffer))
-                                         "Not in a shell viewport buffer")))
+         (when-let* ((viewport-buffer (or (agent-shell-viewport--buffer
+                                           :shell-buffer (current-buffer))
+                                          "Not in a shell viewport buffer")))
            (with-current-buffer viewport-buffer
              (when (derived-mode-p 'agent-shell-viewport-view-mode)
                (agent-shell-viewport-refresh)))
@@ -1437,9 +1437,9 @@ Flow:
                       (not command))
              (agent-shell-heartbeat-start
               :heartbeat (map-elt agent-shell--state :heartbeat)))
-           (when-let ((viewport-buffer (agent-shell-viewport--buffer
-                                        :shell-buffer shell-buffer
-                                        :existing-only t)))
+           (when-let* ((viewport-buffer (agent-shell-viewport--buffer
+                                         :shell-buffer shell-buffer
+                                         :existing-only t)))
              (with-current-buffer viewport-buffer
                (agent-shell-viewport-view-mode)
                (agent-shell-viewport--initialize
@@ -1632,8 +1632,8 @@ COMMAND, when present, may be a shell command string or an argv vector."
                             (cons :description (map-nested-elt acp-notification '(params update rawInput description)))
                             (cons :content (map-nested-elt acp-notification '(params update content)))
                             (cons :raw-input (map-nested-elt acp-notification '(params update rawInput))))
-                      (when-let ((diff (agent-shell--make-diff-info
-                                        :acp-tool-call (map-nested-elt acp-notification '(params update)))))
+                      (when-let* ((diff (agent-shell--make-diff-info
+                                         :acp-tool-call (map-nested-elt acp-notification '(params update)))))
                         (list (cons :diff diff)))))
              (agent-shell--cancel-idle-timer)
              (agent-shell--emit-event
@@ -1800,10 +1800,10 @@ COMMAND, when present, may be a shell command string or an argv vector."
                       (when-let* ((command (agent-shell--tool-call-command-to-string
                                             (map-nested-elt acp-notification '(params update rawInput command)))))
                         (list (cons :command command)))
-                      (when-let ((raw-input (map-nested-elt acp-notification '(params update rawInput))))
+                      (when-let* ((raw-input (map-nested-elt acp-notification '(params update rawInput))))
                         (list (cons :raw-input raw-input)))
-                      (when-let ((diff (agent-shell--make-diff-info
-                                        :acp-tool-call (map-nested-elt acp-notification '(params update)))))
+                      (when-let* ((diff (agent-shell--make-diff-info
+                                         :acp-tool-call (map-nested-elt acp-notification '(params update)))))
                         (list (cons :diff diff)))))
              (agent-shell--cancel-idle-timer)
              (agent-shell--emit-event
@@ -1955,8 +1955,8 @@ COMMAND, when present, may be a shell command string or an argv vector."
                         (cons :status (map-nested-elt acp-request '(params toolCall status)))
                         (cons :kind (map-nested-elt acp-request '(params toolCall kind)))
                         (cons :permission-request-id (map-elt acp-request 'id)))
-                  (when-let ((diff (agent-shell--make-diff-info
-                                    :acp-tool-call (map-nested-elt acp-request '(params toolCall)))))
+                  (when-let* ((diff (agent-shell--make-diff-info
+                                     :acp-tool-call (map-nested-elt acp-request '(params toolCall)))))
                     (list (cons :diff diff)))))
          (let* ((tool-call-id (map-nested-elt acp-request '(params toolCall toolCallId)))
                 (permission-handled
@@ -1994,10 +1994,10 @@ COMMAND, when present, may be a shell command string or an argv vector."
               :expanded t
               :navigation 'never)
              (agent-shell-jump-to-latest-permission-button-row)
-             (when-let (((map-elt state :buffer))
-                        (viewport-buffer (agent-shell-viewport--buffer
-                                          :shell-buffer (map-elt state :buffer)
-                                          :existing-only t)))
+             (when-let* (((map-elt state :buffer))
+                         (viewport-buffer (agent-shell-viewport--buffer
+                                           :shell-buffer (map-elt state :buffer)
+                                           :existing-only t)))
                (with-current-buffer viewport-buffer
                  (agent-shell-jump-to-latest-permission-button-row)))
              (let ((data (list (cons :request-id (map-elt acp-request 'id))
@@ -2263,22 +2263,22 @@ Example output:
                                  ((and (listp value)
                                        (not (vectorp value))
                                        (consp (car value)))
-                                  (when-let ((enabled-items (delq nil (mapcar
-                                                                       (lambda (cap-pair)
-                                                                         ;; Match (key . t) and (key) forms.
-                                                                         ;; eg. promptCapabilities uses (image . t)
-                                                                         ;; but sessionCapabilities uses (fork).
-                                                                         (when (or (eq (cdr cap-pair) t)
-                                                                                   (null (cdr cap-pair)))
-                                                                           (let* ((cap-key (car cap-pair))
-                                                                                  (cap-name (if (symbolp cap-key)
-                                                                                                (symbol-name cap-key)
-                                                                                              cap-key)))
-                                                                             (downcase
-                                                                              (replace-regexp-in-string
-                                                                               "\\([a-z]\\)\\([A-Z]\\)" "\\1 \\2"
-                                                                               cap-name)))))
-                                                                       value))))
+                                  (when-let* ((enabled-items (delq nil (mapcar
+                                                                        (lambda (cap-pair)
+                                                                          ;; Match (key . t) and (key) forms.
+                                                                          ;; eg. promptCapabilities uses (image . t)
+                                                                          ;; but sessionCapabilities uses (fork).
+                                                                          (when (or (eq (cdr cap-pair) t)
+                                                                                    (null (cdr cap-pair)))
+                                                                            (let* ((cap-key (car cap-pair))
+                                                                                   (cap-name (if (symbolp cap-key)
+                                                                                                 (symbol-name cap-key)
+                                                                                               cap-key)))
+                                                                              (downcase
+                                                                               (replace-regexp-in-string
+                                                                                "\\([a-z]\\)\\([A-Z]\\)" "\\1 \\2"
+                                                                                cap-name)))))
+                                                                        value))))
                                     (cons (downcase group-name)
                                           (if (= (length enabled-items) 1)
                                               (car enabled-items)
@@ -2388,9 +2388,9 @@ Returns a cons cell (OLD-TEXT . NEW-TEXT)."
 
 DIFF should be in the form returned by `agent-shell--make-diff-info':
   ((:old . old-text) (:new . new-text) (:file . file-path))"
-  (when-let (diff
-             (old-file (make-temp-file "old"))
-             (new-file (make-temp-file "new")))
+  (when-let* (diff
+              (old-file (make-temp-file "old"))
+              (new-file (make-temp-file "new")))
     (unwind-protect
         (progn
           (with-temp-file old-file (insert (map-elt diff :old)))
@@ -2428,7 +2428,7 @@ DIFF should be in the form returned by `agent-shell--make-diff-info':
             ;; not as a header / blockquote.  See PR #597.
             (add-text-properties (point-min) (point-max)
                                  '(agent-shell-markdown-frozen t
-                                   rear-nonsticky (agent-shell-markdown-frozen)))
+                                                               rear-nonsticky (agent-shell-markdown-frozen)))
             (buffer-string)))
       (delete-file old-file)
       (delete-file new-file))))
@@ -2516,14 +2516,14 @@ For example, shut down ACP client."
     (agent-shell--shutdown)
     ;; Kill any open diff buffers associated with tool calls.
     (map-do (lambda (_tool-call-id tool-call-data)
-              (when-let ((diff-buf (map-elt tool-call-data :diff-buffer)))
+              (when-let* ((diff-buf (map-elt tool-call-data :diff-buffer)))
                 (agent-shell-diff-kill-buffer diff-buf)))
             (map-elt (agent-shell--state) :tool-calls))
-    (when-let (((map-elt (agent-shell--state) :buffer))
-               (viewport-buffer (agent-shell-viewport--buffer
-                                 :shell-buffer (map-elt (agent-shell--state) :buffer)
-                                 :existing-only t))
-               (buffer-live-p viewport-buffer))
+    (when-let* (((map-elt (agent-shell--state) :buffer))
+                (viewport-buffer (agent-shell-viewport--buffer
+                                  :shell-buffer (map-elt (agent-shell--state) :buffer)
+                                  :existing-only t))
+                (buffer-live-p viewport-buffer))
       (kill-buffer viewport-buffer))))
 
 (defun agent-shell--shutdown ()
@@ -2713,17 +2713,17 @@ With INCLUDE-PROJECT
   "Create tool call label from STATE using TOOL-CALL-ID.
 
 Returns propertized labels in :status and :title propertized."
-  (when-let ((tool-call (map-nested-elt state `(:tool-calls ,tool-call-id))))
-    (let* ((title (when-let ((text (agent-shell--shorten-paths
-                                    (map-elt tool-call :title)))
-                             ;; Execute commands go to body instead; use description as title.
-                             ((not (equal (map-elt tool-call :kind) "execute"))))
+  (when-let* ((tool-call (map-nested-elt state `(:tool-calls ,tool-call-id))))
+    (let* ((title (when-let* ((text (agent-shell--shorten-paths
+                                     (map-elt tool-call :title)))
+                              ;; Execute commands go to body instead; use description as title.
+                              ((not (equal (map-elt tool-call :kind) "execute"))))
                     ;; Strip kind prefix from title to avoid
                     ;; redundancy "[read] Read file.el" becomes
                     ;; "[read] file.el"
                     (if (and (map-elt tool-call :kind)
                              (string-match-p (concat "\\`" (regexp-quote
-                                                            (map-elt tool-call :kind)) " ")
+                                                           (map-elt tool-call :kind)) " ")
                                              (downcase text)))
                         (string-trim-left (substring text (length (map-elt tool-call :kind))))
                       text)))
@@ -3044,10 +3044,10 @@ variable (see makunbound)"))
 
 (cl-defun agent-shell--delete-fragment (&key state block-id)
   "Delete fragment with STATE and BLOCK-ID."
-  (when-let (((map-elt state :buffer))
-             (viewport-buffer (agent-shell-viewport--buffer
-                               :shell-buffer (map-elt state :buffer)
-                               :existing-only t)))
+  (when-let* (((map-elt state :buffer))
+              (viewport-buffer (agent-shell-viewport--buffer
+                                :shell-buffer (map-elt state :buffer)
+                                :existing-only t)))
     (with-current-buffer viewport-buffer
       (agent-shell-ui-delete-fragment :namespace-id (map-elt state :request-count) :block-id block-id :no-undo t)))
   (with-current-buffer (map-elt state :buffer)
@@ -3092,12 +3092,12 @@ by default, RENDER-BODY-IMAGES to enable inline image rendering in body."
                "`")
            "Snippet\n\n```\n\\1\n```\n"
            label-right)))
-  (when-let (((map-elt state :buffer))
-             (viewport-buffer (agent-shell-viewport--buffer
-                               :shell-buffer (map-elt state :buffer)
-                               :existing-only t))
-             ((with-current-buffer viewport-buffer
-                (derived-mode-p 'agent-shell-viewport-view-mode))))
+  (when-let* (((map-elt state :buffer))
+              (viewport-buffer (agent-shell-viewport--buffer
+                                :shell-buffer (map-elt state :buffer)
+                                :existing-only t))
+              ((with-current-buffer viewport-buffer
+                 (derived-mode-p 'agent-shell-viewport-view-mode))))
     (with-current-buffer viewport-buffer
       (let ((inhibit-read-only t)
             (auto-scroll (shell-maker--should-auto-scroll-p)))
@@ -3122,8 +3122,8 @@ by default, RENDER-BODY-IMAGES to enable inline image rendering in body."
           (save-excursion
             ;; Apply markdown to body.
             (save-restriction
-              (when-let ((body-start (map-nested-elt range '(:body :start)))
-                         (body-end (map-nested-elt range '(:body :end))))
+              (when-let* ((body-start (map-nested-elt range '(:body :start)))
+                          (body-end (map-nested-elt range '(:body :end))))
                 (narrow-to-region body-start body-end)
                 (agent-shell--render-markdown :render-images render-body-images)))
             ;; Note: For now, we're skipping applying markdown
@@ -3132,8 +3132,8 @@ by default, RENDER-BODY-IMAGES to enable inline image rendering in body."
             ;;
             ;; Apply markdown to right label.
             (save-restriction
-              (when-let ((label-right-start (map-nested-elt range '(:label-right :start)))
-                         (label-right-end (map-nested-elt range '(:label-right :end))))
+              (when-let* ((label-right-start (map-nested-elt range '(:label-right :start)))
+                          (label-right-end (map-nested-elt range '(:label-right :end))))
                 (narrow-to-region label-right-start label-right-end)
                 (agent-shell--render-markdown :render-images nil))))
           (when auto-scroll
@@ -3181,8 +3181,8 @@ by default, RENDER-BODY-IMAGES to enable inline image rendering in body."
              ;; `read-only t' from `agent-shell-ui--insert-fragment',
              ;; and `agent-shell-markdown' modifies buffer chars
              ;; (unlike the overlay renderer which only adds overlays).
-             (when-let ((body-start (map-nested-elt range '(:body :start)))
-                        (body-end (map-nested-elt range '(:body :end))))
+             (when-let* ((body-start (map-nested-elt range '(:body :start)))
+                         (body-end (map-nested-elt range '(:body :end))))
                (narrow-to-region body-start body-end)
                (agent-shell--render-markdown)
                (widen))
@@ -3192,8 +3192,8 @@ by default, RENDER-BODY-IMAGES to enable inline image rendering in body."
              ;; for statuses (ie. boxed).
              ;;
              ;; Apply markdown to right label.
-             (when-let ((label-right-start (map-nested-elt range '(:label-right :start)))
-                        (label-right-end (map-nested-elt range '(:label-right :end))))
+             (when-let* ((label-right-start (map-nested-elt range '(:label-right :start)))
+                         (label-right-end (map-nested-elt range '(:label-right :end))))
                (narrow-to-region label-right-start label-right-end)
                (agent-shell--render-markdown)
                (widen))))
@@ -3214,12 +3214,12 @@ BLOCK-ID uniquely identifies the entry.
 TEXT is the string to insert or append.
 APPEND and CREATE-NEW control update behavior."
   (let ((ns (or namespace-id (map-elt state :request-count))))
-    (when-let (((map-elt state :buffer))
-               (viewport-buffer (agent-shell-viewport--buffer
-                                 :shell-buffer (map-elt state :buffer)
-                                 :existing-only t))
-               ((with-current-buffer viewport-buffer
-                  (derived-mode-p 'agent-shell-viewport-view-mode))))
+    (when-let* (((map-elt state :buffer))
+                (viewport-buffer (agent-shell-viewport--buffer
+                                  :shell-buffer (map-elt state :buffer)
+                                  :existing-only t))
+                ((with-current-buffer viewport-buffer
+                   (derived-mode-p 'agent-shell-viewport-view-mode))))
       (with-current-buffer viewport-buffer
         (let ((inhibit-read-only t))
           (agent-shell-ui-update-text
@@ -3764,8 +3764,8 @@ When provided, included in help-echo tooltips."
 (defun agent-shell--image-type-to-mime (filename)
   "Convert image type from FILENAME to MIME type string.
 Returns a MIME type like \"image/png\" or \"image/jpeg\"."
-  (when-let ((type (and (stringp filename)
-                        (image-supported-file-p filename))))
+  (when-let* ((type (and (stringp filename)
+                         (image-supported-file-p filename))))
     (pcase type
       ('svg "image/svg+xml")
       (_ (format "image/%s" type)))))
@@ -4067,7 +4067,7 @@ Cancels any existing idle timer first.  After
 `agent-shell-idle-timeout' seconds, emits an `idle' event with
 the original EVENT as :idle-event."
   (agent-shell--cancel-idle-timer)
-  (when-let ((buffer (map-elt (agent-shell--state) :buffer)))
+  (when-let* ((buffer (map-elt (agent-shell--state) :buffer)))
     (map-put! (agent-shell--state) :idle-timer
               (run-at-time (agent-shell-idle-timeout :event event) nil
                            (lambda ()
@@ -4082,8 +4082,8 @@ the original EVENT as :idle-event."
 
 (defun agent-shell--cancel-idle-timer ()
   "Cancel any pending idle timer."
-  (when-let ((timer (map-elt (agent-shell--state) :idle-timer))
-             ((timerp timer)))
+  (when-let* ((timer (map-elt (agent-shell--state) :idle-timer))
+              ((timerp timer)))
     (cancel-timer timer))
   (map-put! (agent-shell--state) :idle-timer nil))
 
@@ -4209,13 +4209,13 @@ Must provide ON-INITIATED (lambda ())."
                                     (assq 'fork acp-session-capabilities)
                                     t)))
                    ;; Save prompt capabilities from agent, converting to internal symbols
-                   (when-let ((prompt-capabilities
-                               (map-nested-elt acp-response '(agentCapabilities promptCapabilities))))
+                   (when-let* ((prompt-capabilities
+                                (map-nested-elt acp-response '(agentCapabilities promptCapabilities))))
                      (map-put! agent-shell--state :prompt-capabilities
                                (list (cons :image (map-elt prompt-capabilities 'image))
                                      (cons :embedded-context (map-elt prompt-capabilities 'embeddedContext)))))
                    ;; Save available modes from agent, converting to internal symbols
-                   (when-let ((modes (map-elt acp-response 'modes)))
+                   (when-let* ((modes (map-elt acp-response 'modes)))
                      (map-put! agent-shell--state :available-modes
                                (list (cons :current-mode-id (map-elt modes 'currentModeId))
                                      (cons :modes (mapcar (lambda (mode)
@@ -4223,7 +4223,7 @@ Must provide ON-INITIATED (lambda ())."
                                                               (:name . ,(map-elt mode 'name))
                                                               (:description . ,(map-elt mode 'description))))
                                                           (map-elt modes 'availableModes))))))
-                   (when-let ((agent-capabilities (map-elt acp-response 'agentCapabilities)))
+                   (when-let* ((agent-capabilities (map-elt acp-response 'agentCapabilities)))
                      (map-put! agent-shell--state :supports-session-load
                                (eq (map-elt agent-capabilities 'loadSession) t))
                      (agent-shell--update-fragment
@@ -5076,7 +5076,7 @@ Returns list of alists with :start, :end, and :path for each mention."
                          prompt pos)
       (push `((:start . ,(match-beginning 0))
               (:end . ,(match-end 0))
-              (:path . ,(when-let ((path (or (match-string 1 prompt) (match-string 2 prompt))))
+              (:path . ,(when-let* ((path (or (match-string 1 prompt) (match-string 2 prompt))))
                           (substring-no-properties path))))
             mentions)
       (setq pos (match-end 0)))
@@ -5252,10 +5252,10 @@ first-prompt title is left in place."
      :buffer (current-buffer)
      :on-success
      (lambda (acp-response)
-       (when-let ((acp-session (seq-find
-                                (lambda (acp-session)
-                                  (equal (map-elt acp-session 'sessionId) session-id))
-                                (append (or (map-elt acp-response 'sessions) '()) nil))))
+       (when-let* ((acp-session (seq-find
+                                 (lambda (acp-session)
+                                   (equal (map-elt acp-session 'sessionId) session-id))
+                                 (append (or (map-elt acp-response 'sessions) '()) nil))))
          (agent-shell--set-session-title (map-elt acp-session 'title)))))))
 
 (cl-defun agent-shell--send-command (&key prompt shell-buffer)
@@ -5288,9 +5288,9 @@ first-prompt title is left in place."
                    (agent-shell--indent-markdown-headers prompt))
      :file-path agent-shell--transcript-file)
 
-    (when-let ((viewport-buffer (agent-shell-viewport--buffer
-                                 :shell-buffer shell-buffer
-                                 :existing-only t)))
+    (when-let* ((viewport-buffer (agent-shell-viewport--buffer
+                                  :shell-buffer shell-buffer
+                                  :existing-only t)))
       (with-current-buffer viewport-buffer
         (agent-shell-viewport-view-mode)
         (agent-shell-viewport--initialize
@@ -5348,9 +5348,9 @@ first-prompt title is left in place."
                         :data data)
                        (agent-shell--start-idle-timer :event 'turn-complete :data data))
                      ;; Update viewport header (longer busy)
-                     (when-let ((viewport-buffer (agent-shell-viewport--buffer
-                                                  :shell-buffer shell-buffer
-                                                  :existing-only t)))
+                     (when-let* ((viewport-buffer (agent-shell-viewport--buffer
+                                                   :shell-buffer shell-buffer
+                                                   :existing-only t)))
                        (with-current-buffer viewport-buffer
                          (agent-shell-viewport--update-header)))
                      (when success
@@ -5363,9 +5363,9 @@ first-prompt title is left in place."
                    (agent-shell-heartbeat-stop
                     :heartbeat (map-elt agent-shell--state :heartbeat))
                    ;; Update viewport header (longer busy)
-                   (when-let ((viewport-buffer (agent-shell-viewport--buffer
-                                                :shell-buffer shell-buffer
-                                                :existing-only t)))
+                   (when-let* ((viewport-buffer (agent-shell-viewport--buffer
+                                                 :shell-buffer shell-buffer
+                                                 :existing-only t)))
                      (with-current-buffer viewport-buffer
                        (agent-shell-viewport--update-header)))))))
 
@@ -5440,7 +5440,7 @@ Returns a buffer object or nil."
 
 (defun agent-shell-goto-last-interaction ()
   "Move point to the last interaction in the shell buffer."
-  (when-let ((shell-buffer (agent-shell--shell-buffer)))
+  (when-let* ((shell-buffer (agent-shell--shell-buffer)))
     (with-current-buffer shell-buffer
       (goto-char comint-last-input-start))))
 
@@ -5449,7 +5449,7 @@ Returns a buffer object or nil."
 visual padding emitted by the markdown renderer inside fragments
 (e.g. source-block top/bottom vpad).  Delegates the raw extraction
 to shell-maker and runs the result through `agent-shell-trim'."
-  (when-let ((cell (shell-maker--command-and-response-at-point :trimmed nil)))
+  (when-let* ((cell (shell-maker--command-and-response-at-point :trimmed nil)))
     (cons (agent-shell-trim (car cell))
           (agent-shell-trim (cdr cell)))))
 
@@ -5457,17 +5457,17 @@ to shell-maker and runs the result through `agent-shell-trim'."
   "Like `shell-maker-next-command-and-response' but preserves
 visual padding inside fragments — see
 `agent-shell--command-and-response-at-point'."
-  (when-let ((cell (shell-maker-next-command-and-response backwards :trimmed nil)))
+  (when-let* ((cell (shell-maker-next-command-and-response backwards :trimmed nil)))
     (cons (agent-shell-trim (car cell))
           (agent-shell-trim (cdr cell)))))
 
 (defun agent-shell-interaction-at-point ()
   "Return the interaction at point in the shell buffer.
 Result is of the form ((:prompt . PROMPT) (:response . RESPONSE))."
-  (when-let ((shell-buffer (agent-shell--shell-buffer))
-             (result (with-current-buffer shell-buffer
-                       (or (agent-shell--command-and-response-at-point)
-                           (agent-shell--next-command-and-response t)))))
+  (when-let* ((shell-buffer (agent-shell--shell-buffer))
+              (result (with-current-buffer shell-buffer
+                        (or (agent-shell--command-and-response-at-point)
+                            (agent-shell--next-command-and-response t)))))
     `((:prompt . ,(car result))
       (:response . ,(cdr result)))))
 
@@ -5609,14 +5609,14 @@ Uses AGENT-CWD to shorten file paths where necessary."
                                   'modification-hooks
                                   ;; Delete entire image if any of it is deleted.
                                   (list (lambda (edit-start edit-end)
-                                          (when-let (((get-text-property edit-start 'agent-shell-context-image))
-                                                     (image-start (or (previous-single-property-change
-                                                                       (1+ edit-start) 'agent-shell-context-image)
-                                                                      (point-min)))
-                                                     (image-end (or (next-single-property-change
-                                                                     edit-start 'agent-shell-context-image)
-                                                                    (point-max)))
-                                                     (inhibit-modification-hooks t))
+                                          (when-let* (((get-text-property edit-start 'agent-shell-context-image))
+                                                      (image-start (or (previous-single-property-change
+                                                                        (1+ edit-start) 'agent-shell-context-image)
+                                                                       (point-min)))
+                                                      (image-end (or (next-single-property-change
+                                                                      edit-start 'agent-shell-context-image)
+                                                                     (point-max)))
+                                                      (inhibit-modification-hooks t))
                                             (when (> image-end edit-end)
                                               (delete-region edit-end image-end))
                                             (when (< image-start edit-start)
@@ -5835,11 +5835,11 @@ For example:
     ;; Append filename to title when available and not
     ;; already included, so the user can see which file
     ;; the permission applies to.
-    (when-let ((filename (and filepath
-                              (file-name-nondirectory filepath)))
-               ((not (string-empty-p filename)))
-               ((or (not text)
-                    (not (string-match-p (regexp-quote filename) text)))))
+    (when-let* ((filename (and filepath
+                               (file-name-nondirectory filepath)))
+                ((not (string-empty-p filename)))
+                ((or (not text)
+                     (not (string-match-p (regexp-quote filename) text)))))
       (setq text (if text
                      (concat (string-trim-right text) " (" filename ")")
                    filename)))
@@ -5872,7 +5872,7 @@ For example:
          (shell-buffer (map-elt state :buffer))
          (keymap (let ((map (make-sparse-keymap)))
                    (dolist (action actions)
-                     (when-let ((char (map-elt action :char)))
+                     (when-let* ((char (map-elt action :char)))
                        (define-key map (kbd char)
                                    (lambda ()
                                      (interactive)
@@ -5991,7 +5991,7 @@ MESSAGE-TEXT: Optional message to display after sending the response."
               :option-id option-id))
   ;; Kill any diff buffer opened for this tool call, suppressing the
   ;; on-exit callback since the permission is already being resolved.
-  (when-let ((diff-buf (map-nested-elt state (list :tool-calls tool-call-id :diff-buffer))))
+  (when-let* ((diff-buf (map-nested-elt state (list :tool-calls tool-call-id :diff-buffer))))
     (agent-shell-diff-kill-buffer diff-buf))
   ;; Ensure in the shell buffer for state operations, as this
   ;; function may be invoked from a viewport buffer.
@@ -6006,8 +6006,8 @@ MESSAGE-TEXT: Optional message to display after sending the response."
     ;;
     ;; Do clear :permission-request-id so consumers can distinguish
     ;; between a pending permission request and one already answered.
-    (when-let ((tool-calls (map-elt state :tool-calls))
-               (tool-call (map-elt tool-calls tool-call-id)))
+    (when-let* ((tool-calls (map-elt state :tool-calls))
+                (tool-call (map-elt tool-calls tool-call-id)))
       (map-put! tool-calls tool-call-id
                 (map-delete tool-call :permission-request-id)))
     (agent-shell--cancel-idle-timer)
@@ -6022,10 +6022,10 @@ MESSAGE-TEXT: Optional message to display after sending the response."
     ;; Jump to any remaining permission buttons, or go to end of buffer.
     (or (agent-shell-jump-to-latest-permission-button-row)
         (goto-char (point-max)))
-    (when-let (((map-elt state :buffer))
-               (viewport-buffer (agent-shell-viewport--buffer
-                                 :shell-buffer (map-elt state :buffer)
-                                 :existing-only t)))
+    (when-let* (((map-elt state :buffer))
+                (viewport-buffer (agent-shell-viewport--buffer
+                                  :shell-buffer (map-elt state :buffer)
+                                  :existing-only t)))
       (with-current-buffer viewport-buffer
         (or (agent-shell-jump-to-latest-permission-button-row)
             (goto-char (point-max)))))))
@@ -6112,7 +6112,7 @@ ACTIONS as per `agent-shell--make-permission-action'."
                              (message "Ignored"))))))
           ;; Track the diff buffer in tool-call state so it can be
           ;; cleaned up when the permission is resolved externally.
-          (when-let ((tool-calls (map-elt state :tool-calls)))
+          (when-let* ((tool-calls (map-elt state :tool-calls)))
             (map-put! tool-calls tool-call-id
                       (map-insert (map-elt tool-calls tool-call-id)
                                   :diff-buffer diff-buffer))))))))
@@ -6222,14 +6222,14 @@ Returns nil if the ACP-OPTION kind is not recognized."
 Returns non-nil if a permission button was found, nil otherwise."
   (declare (modes agent-shell-mode))
   (interactive)
-  (when-let ((found (save-mark-and-excursion
-                      (goto-char (point-max))
-                      (agent-shell-previous-permission-button))))
+  (when-let* ((found (save-mark-and-excursion
+                       (goto-char (point-max))
+                       (agent-shell-previous-permission-button))))
     (deactivate-mark)
     ;; Unless buffer is in window, cursor is not moved.
     ;; Make sure the cursor is moved even if buffer is in background.
-    (when-let ((window (or (get-buffer-window (current-buffer))
-                           (seq-first (window-list)))))
+    (when-let* ((window (or (get-buffer-window (current-buffer))
+                            (seq-first (window-list)))))
       (save-window-excursion
         (set-window-buffer window (current-buffer))
         (with-selected-window window
@@ -6245,9 +6245,9 @@ Returns non-nil if a permission button was found, nil otherwise."
   (interactive)
   (when-let* ((found (save-mark-and-excursion
                        (when (get-text-property (point) 'agent-shell-permission-button)
-                         (when-let ((next-change (next-single-property-change (point) 'agent-shell-permission-button)))
+                         (when-let* ((next-change (next-single-property-change (point) 'agent-shell-permission-button)))
                            (goto-char next-change)))
-                       (when-let ((next (text-property-search-forward
+                       (when-let* ((next (text-property-search-forward
                                          'agent-shell-permission-button t t)))
                          (prop-match-beginning next)))))
     (deactivate-mark)
@@ -6260,10 +6260,10 @@ Returns non-nil if a permission button was found, nil otherwise."
   (interactive)
   (when-let* ((found (save-mark-and-excursion
                        (when (get-text-property (point) 'agent-shell-permission-button)
-                         (when-let ((prev-change (previous-single-property-change (point) 'agent-shell-permission-button)))
+                         (when-let* ((prev-change (previous-single-property-change (point) 'agent-shell-permission-button)))
                            (goto-char prev-change)))
-                       (when-let ((prev (text-property-search-backward
-                                         'agent-shell-permission-button t t)))
+                       (when-let* ((prev (text-property-search-backward
+                                          'agent-shell-permission-button t t)))
                          (prop-match-beginning prev)))))
     (deactivate-mark)
     (goto-char found)
@@ -6452,7 +6452,7 @@ Uses AGENT-CWD to shorten file paths where necessary."
                                                  (message "Press RET to open file"))
                                                'link))
                                    (numbered-preview
-                                    (when-let ((buffer (get-file-buffer (map-elt region :file))))
+                                    (when-let* ((buffer (get-file-buffer (map-elt region :file))))
                                       (let ((char-start (map-elt region :char-start))
                                             (char-end (map-elt region :char-end))
                                             (max-preview-lines 5))
@@ -6521,9 +6521,9 @@ If CAP is non-nil, truncate at CAP."
                             (interactive)
                             (save-excursion
                               (goto-char (point-min))
-                              (when-let ((match (text-property-search-forward
-                                                 'agent-shell-region-id id t))
-                                         (inhibit-read-only t))
+                              (when-let* ((match (text-property-search-forward
+                                                  'agent-shell-region-id id t))
+                                          (inhibit-read-only t))
                                 (delete-region (prop-match-beginning match)
                                                (prop-match-end match))
                                 (goto-char (prop-match-beginning match))
@@ -6578,7 +6578,7 @@ TEXT is the error message."
 
 (defun agent-shell--get-flymake-error-context ()
   "Get flymake error at point, ready for sending to agent."
-  (when-let ((diagnostics (flymake-diagnostics (point))))
+  (when-let* ((diagnostics (flymake-diagnostics (point))))
     (mapconcat
      (lambda (diagnostic)
        (let* ((buffer (flymake-diagnostic-buffer diagnostic))
@@ -6605,9 +6605,9 @@ TEXT is the error message."
 
 (defun agent-shell--get-flycheck-error-context ()
   "Get flycheck error at point, ready for sending to agent."
-  (when-let (((bound-and-true-p flycheck-mode))
-             ((fboundp 'flycheck-overlay-errors-at))
-             (errors (flycheck-overlay-errors-at (point))))
+  (when-let* (((bound-and-true-p flycheck-mode))
+              ((fboundp 'flycheck-overlay-errors-at))
+              (errors (flycheck-overlay-errors-at (point))))
     (mapconcat
      (lambda (err)
        (let* ((buffer (current-buffer))
@@ -6746,7 +6746,7 @@ joined string if JOINER is provided."
   "Get the active region decorated with file path and Markdown code block.
 
 When DEACTIVATE is non-nil, deactivate region/selection."
-  (when-let ((region-data (agent-shell--get-region :deactivate deactivate)))
+  (when-let* ((region-data (agent-shell--get-region :deactivate deactivate)))
     (let ((file (map-elt region-data :file))
           (start (map-elt region-data :char-start))
           (end (map-elt region-data :char-end))
@@ -6785,9 +6785,9 @@ session/new response.  Each mode has an `:id' and `:name' field.
 We look up the mode by ID to get its display name.
 
 See https://agentclientprotocol.com/protocol/session-modes for details."
-  (when-let ((mode (seq-find (lambda (m)
-                               (string= mode-id (map-elt m :id)))
-                             available-session-modes)))
+  (when-let* ((mode (seq-find (lambda (m)
+                                (string= mode-id (map-elt m :id)))
+                              available-session-modes)))
     (map-elt mode :name)))
 
 (defun agent-shell-get-model-name (state)
@@ -6808,7 +6808,7 @@ Prefers config option data when available."
 
 Returns the mode name if available, otherwise returns nil.
 Prefers config option data when available."
-  (when-let ((mode-id (agent-shell--current-mode-id state)))
+  (when-let* ((mode-id (agent-shell--current-mode-id state)))
     (or (agent-shell--resolve-session-mode-name
          mode-id
          (agent-shell--get-available-modes state))
@@ -6926,12 +6926,12 @@ Shows \" ⧉\" when a command prefix is used."
               (propertize " ⧉ ➤"
                           'face 'font-lock-constant-face
                           'help-echo "Running in container"))
-            (when-let ((model-name (or (map-elt (seq-find (lambda (model)
-                                                            (string= (map-elt model :model-id)
-                                                                     (agent-shell--current-model-id (agent-shell--state))))
-                                                          (agent-shell--get-available-models (agent-shell--state)))
-                                                :name)
-                                       (agent-shell--current-model-id (agent-shell--state)))))
+            (when-let* ((model-name (or (map-elt (seq-find (lambda (model)
+                                                             (string= (map-elt model :model-id)
+                                                                      (agent-shell--current-model-id (agent-shell--state))))
+                                                           (agent-shell--get-available-models (agent-shell--state)))
+                                                 :name)
+                                        (agent-shell--current-model-id (agent-shell--state)))))
               (concat " " (propertize model-name
                                       'face 'font-lock-negation-char-face
                                       'help-echo (concat "Click to open LLM model menu "
@@ -6944,7 +6944,7 @@ Shows \" ⧉\" when a command prefix is used."
                                                    (define-key map [mode-line mouse-1]
                                                                (agent-shell--mode-line-model-menu))
                                                    map))))
-            (when-let ((thought-level-name (agent-shell-get-thought-level-name (agent-shell--state))))
+            (when-let* ((thought-level-name (agent-shell-get-thought-level-name (agent-shell--state))))
               (concat " ➤ " (propertize thought-level-name
                                         'face 'font-lock-keyword-face
                                         'help-echo (concat "Click to open thought level menu "
@@ -6957,9 +6957,9 @@ Shows \" ⧉\" when a command prefix is used."
                                                      (define-key map [mode-line mouse-1]
                                                                  (agent-shell--mode-line-thought-level-menu))
                                                      map))))
-            (when-let ((mode-name (agent-shell--resolve-session-mode-name
-                                   (agent-shell--current-mode-id (agent-shell--state))
-                                   (agent-shell--get-available-modes (agent-shell--state)))))
+            (when-let* ((mode-name (agent-shell--resolve-session-mode-name
+                                    (agent-shell--current-mode-id (agent-shell--state))
+                                    (agent-shell--get-available-modes (agent-shell--state)))))
               (concat " ➤ " (propertize mode-name
                                         'face 'font-lock-type-face
                                         'help-echo (concat "Click to open session mode menu "
@@ -6972,7 +6972,7 @@ Shows \" ⧉\" when a command prefix is used."
                                                      (define-key map [mode-line mouse-1]
                                                                  (agent-shell--mode-line-mode-menu))
                                                      map))))
-            (when-let ((indicator (agent-shell--context-usage-indicator)))
+            (when-let* ((indicator (agent-shell--context-usage-indicator)))
               (concat " ➤ " indicator))
             (agent-shell--busy-indicator-frame))))
 
@@ -7262,7 +7262,7 @@ For example:
 
 (defun agent-shell--transcript-file-path ()
   "Return the transcript file path, or nil if disabled."
-  (when-let ((path-fn agent-shell-transcript-file-path-function))
+  (when-let* ((path-fn agent-shell-transcript-file-path-function))
     (condition-case err
         (funcall path-fn)
       (error
@@ -7450,8 +7450,8 @@ Includes STATUS, TITLE, KIND, DESCRIPTION, COMMAND, PARAMETERS, and OUTPUT."
   "Process the next pending request from the queue if available."
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
-  (when-let ((pending (map-elt agent-shell--state :pending-requests))
-             (next-request (car pending)))
+  (when-let* ((pending (map-elt agent-shell--state :pending-requests))
+              (next-request (car pending)))
     (map-put! agent-shell--state :pending-requests (cdr pending))
     (agent-shell--insert-to-shell-buffer
      :text next-request

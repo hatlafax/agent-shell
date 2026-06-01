@@ -2357,9 +2357,9 @@ code block content
            (agent-shell-permission-responder-function
             (lambda (request)
               (setq handler-received request)
-              (when-let ((opt (seq-find
-                               (lambda (o) (equal (map-elt o :kind) "allow_once"))
-                               (map-elt request :options))))
+              (when-let* ((opt (seq-find
+                                (lambda (o) (equal (map-elt o :kind) "allow_once"))
+                                (map-elt request :options))))
                 (funcall (map-elt request :respond)
                          (map-elt opt :option-id)))))
            (state `((:buffer . ,(current-buffer))
@@ -2643,7 +2643,7 @@ that fallback buffer, potentially starting the new shell in the wrong project."
         (kill-buffer shell-buffer))
       (when (and other-buffer (buffer-live-p other-buffer))
         (kill-buffer other-buffer))
-      (when-let ((buf (get-buffer "*test-restart-new-shell*")))
+      (when-let* ((buf (get-buffer "*test-restart-new-shell*")))
         (kill-buffer buf)))))
 
 (ert-deftest agent-shell-sort-sessions-by-recency-test ()
