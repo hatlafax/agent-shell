@@ -50,10 +50,17 @@ NAMESPACE-ID, BLOCK-ID, LABEL-LEFT, LABEL-RIGHT, and BODY are the keys."
         (cons :label-right (agent-shell-ui--string-or-nil label-right))
         (cons :body (agent-shell-ui--string-or-nil body))))
 
+;(defun agent-shell-ui--insert-read-only (text)
+;  "Insert TEXT as read-only output."
+;  (add-text-properties 0 (length text)
+;                       '(read-only t front-sticky (read-only))
+;                       text)
+;  (insert text))
 (defun agent-shell-ui--insert-read-only (text)
-  "Insert TEXT as read-only output."
   (add-text-properties 0 (length text)
-                       '(read-only t front-sticky (read-only))
+                       '(read-only t
+                         front-sticky (read-only)
+                         rear-nonsticky (read-only front-sticky field))
                        text)
   (insert text))
 
