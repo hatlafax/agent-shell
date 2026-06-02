@@ -3662,7 +3662,7 @@ When provided, included in help-echo tooltips."
                                                                       (dx . "8"))
                                                                     (map-elt header-model :thought-level-name))))
                                       ;; Session mode (optional)
-                                      (when (map-elt header-model :mode-id)
+                                      (when (map-elt header-model :mode-name)
                                         ;; Add separator arrow
                                         (dom-append-child text-node
                                                           (dom-node 'tspan
