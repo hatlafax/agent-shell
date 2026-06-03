@@ -697,6 +697,11 @@
                           (options . [((value . "code")
                                        (name . "Code"))]))]))
     (cl-letf (((symbol-function 'agent-shell--update-header-and-mode-line)
+               #'ignore)
+              ;; `--emit-event' calls `(agent-shell--state)' which errors
+              ;; outside of an `agent-shell-mode' buffer; the test exercises
+              ;; the data layer, not subscription dispatch.
+              ((symbol-function 'agent-shell--emit-event)
                #'ignore))
       (agent-shell--on-notification
        :state state
@@ -2198,6 +2203,38 @@ code block content
           (should-not (string-match-p "test-session-id"
                                       (substring-no-properties header))))))))
 
+(ert-deftest agent-shell--make-header-graphical-status-fg-test ()
+  "Test graphical header honors a propertized `:status' foreground."
+  (skip-unless (image-type-available-p 'svg))
+  (with-temp-buffer
+    (setq-local agent-shell--state
+                `((:agent-config . ((:buffer-name . "Test")
+                                    (:icon-name . nil)))
+                  (:session . ((:id . "abc")
+                               (:model-id . nil)
+                               (:models . nil)
+                               (:mode-id . nil)
+                               (:modes . nil)))))
+    (cl-letf (((symbol-function 'agent-shell--state)
+               (lambda () agent-shell--state))
+              ((symbol-function 'agent-shell--context-usage-indicator)
+               (lambda () nil))
+              ((symbol-function 'agent-shell--busy-indicator-frame)
+               (lambda () nil))
+              ((symbol-function 'agent-shell--session-id-indicator)
+               (lambda () nil)))
+      (let* ((agent-shell-header-style 'graphical)
+             (agent-shell--header-cache nil)
+             (header (agent-shell--make-header
+                      agent-shell--state
+                      :position "1/3"
+                      :status (propertize "Edit" 'face '(:foreground "#00ff00"))))
+             (svg-data (plist-get (cdr (get-text-property 1 'display header))
+                                  :data)))
+        (should (string-match-p ">1/3</tspan>" svg-data))
+        (should (string-match-p "<tspan[^>]*fill=\"#00ff00\"[^>]*>Edit"
+                                svg-data))))))
+
 ;;; Tests for agent-shell--dot-subdir-in-repo
 
 (ert-deftest agent-shell--dot-subdir-in-repo-returns-path-test ()
@@ -2320,9 +2357,9 @@ code block content
            (agent-shell-permission-responder-function
             (lambda (request)
               (setq handler-received request)
-              (when-let ((opt (seq-find
-                               (lambda (o) (equal (map-elt o :kind) "allow_once"))
-                               (map-elt request :options))))
+              (when-let* ((opt (seq-find
+                                (lambda (o) (equal (map-elt o :kind) "allow_once"))
+                                (map-elt request :options))))
                 (funcall (map-elt request :respond)
                          (map-elt opt :option-id)))))
            (state `((:buffer . ,(current-buffer))
@@ -2504,13 +2541,11 @@ Based on ACP traffic from https://github.com/xenodium/agent-shell/issues/415."
   (should (equal
            "external_directory (_event.rs)"
            (agent-shell--permission-title
-            :acp-request
-            '((params . ((toolCall . ((toolCallId . "call_ad19e402fcb548c3acd48bbd")
-                                      (status . "pending")
-                                      (title . "external_directory")
-                                      (rawInput . ((filepath . "/home/pmw/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-sdk-s3-1.112.0/src/types/_event.rs")
-                                                   (parentDir . "/home/pmw/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-sdk-s3-1.112.0/src/types")))
-                                      (kind . "other"))))))))))
+            :tool-call
+            '((:title . "external_directory")
+              (:raw-input . ((filepath . "/home/pmw/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-sdk-s3-1.112.0/src/types/_event.rs")
+                             (parentDir . "/home/pmw/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/aws-sdk-s3-1.112.0/src/types")))
+              (:kind . "other"))))))
 
 (ert-deftest agent-shell--permission-title-edit-shows-filename-test ()
   "Test `agent-shell--permission-title' includes filename for edit permission.
@@ -2518,35 +2553,31 @@ Based on ACP traffic from https://github.com/xenodium/agent-shell/issues/415."
   (should (equal
            "edit (s3notifications.rs)"
            (agent-shell--permission-title
-            :acp-request
-            '((params . ((toolCall . ((toolCallId . "call_451e5acf91884aecaadf3173")
-                                      (status . "pending")
-                                      (title . "edit")
-                                      (rawInput . ((filepath . "/home/pmw/Repos/warmup-s3-archives/src/s3notifications.rs")
-                                                   (diff . "Index: /home/pmw/Repos/warmup-s3-archives/src/s3notifications.rs\n")))
-                                      (kind . "edit"))))))))))
+            :tool-call
+            '((:title . "edit")
+              (:raw-input . ((filepath . "/home/pmw/Repos/warmup-s3-archives/src/s3notifications.rs")
+                             (diff . "Index: /home/pmw/Repos/warmup-s3-archives/src/s3notifications.rs\n")))
+              (:kind . "edit"))))))
 
 (ert-deftest agent-shell--permission-title-no-duplicate-filename-test ()
   "Test `agent-shell--permission-title' does not duplicate filename already in title."
   (should (equal
            "Read s3notifications.rs"
            (agent-shell--permission-title
-            :acp-request
-            '((params . ((toolCall . ((toolCallId . "tc-1")
-                                      (title . "Read s3notifications.rs")
-                                      (rawInput . ((filepath . "/home/user/src/s3notifications.rs")))
-                                      (kind . "read"))))))))))
+            :tool-call
+            '((:title . "Read s3notifications.rs")
+              (:raw-input . ((filepath . "/home/user/src/s3notifications.rs")))
+              (:kind . "read"))))))
 
 (ert-deftest agent-shell--permission-title-execute-fenced-test ()
   "Test `agent-shell--permission-title' fences execute commands."
   (should (equal
            "```console\nls -la\n```"
            (agent-shell--permission-title
-            :acp-request
-            '((params . ((toolCall . ((toolCallId . "tc-1")
-                                      (title . "Bash")
-                                      (rawInput . ((command . "ls -la")))
-                                      (kind . "execute"))))))))))
+            :tool-call
+            '((:title . "Bash")
+              (:raw-input . ((command . "ls -la")))
+              (:kind . "execute"))))))
 
 (ert-deftest agent-shell-restart-preserves-default-directory ()
   "Restart should use the shell's directory, not the fallback buffer's.
@@ -2606,7 +2637,7 @@ that fallback buffer, potentially starting the new shell in the wrong project."
         (kill-buffer shell-buffer))
       (when (and other-buffer (buffer-live-p other-buffer))
         (kill-buffer other-buffer))
-      (when-let ((buf (get-buffer "*test-restart-new-shell*")))
+      (when-let* ((buf (get-buffer "*test-restart-new-shell*")))
         (kill-buffer buf)))))
 
 (ert-deftest agent-shell-sort-sessions-by-recency-test ()
@@ -2674,6 +2705,155 @@ and it must handle that cleanly."
     (markdown-overlays-put)
     (let ((result (agent-shell--filter-buffer-substring (point-min) (point-max))))
       (should (equal result "Use foo-bar for that.")))))
+
+(ert-deftest agent-shell-trim-strips-untagged-whitespace ()
+  ;; Plain `string-trim'-style behavior when nothing is tagged: outer
+  ;; whitespace is removed.
+  (should (equal "hello"
+                 (agent-shell-trim "\n\n  hello  \n\n"))))
+
+(ert-deftest agent-shell-trim-preserves-tagged-whitespace ()
+  ;; A trailing `\\n' tagged with `agent-shell-non-trimmable'
+  ;; survives the trim — the renderer's panel padding (top/bottom
+  ;; vpad `\\n's around a source block) relies on this so the panel
+  ;; doesn't get clipped on the first / last block of a response.
+  (let* ((tail (propertize "\n" 'agent-shell-non-trimmable t))
+         (s (concat "\n\nhello\n" tail "\n\n")))
+    (should (equal "hello\n\n"
+                   (substring-no-properties
+                    (agent-shell-trim s))))))
+
+(ert-deftest agent-shell-trim-handles-edge-cases ()
+  ;; nil input, empty string, and all-whitespace strings.
+  (should (null (agent-shell-trim nil)))
+  (should (equal "" (agent-shell-trim "")))
+  (should (equal "" (agent-shell-trim "\n\n  \t  \n\n"))))
+
+(defun agent-shell-tests--make-session-update (kind text)
+  "Build a fake `session/update' notification of KIND with TEXT.
+KIND is a sessionUpdate string such as \"user_message_chunk\"."
+  `((method . "session/update")
+    (params . ((update . ((sessionUpdate . ,kind)
+                          (content . ((type . "text")
+                                      (text . ,text))))))))
+)
+
+(ert-deftest agent-shell--restore-summary-picks-first-user-and-last-agent ()
+  "Test summary accumulation keeps first user prompt and last agent reply."
+  (let ((state (list (cons :restore-summary nil))))
+    (agent-shell--restore-summary-init state)
+    (dolist (notif (list
+                    (agent-shell-tests--make-session-update "user_message_chunk" "Hello ")
+                    (agent-shell-tests--make-session-update "user_message_chunk" "world")
+                    (agent-shell-tests--make-session-update "agent_message_chunk" "Hi ")
+                    (agent-shell-tests--make-session-update "agent_message_chunk" "there")
+                    (agent-shell-tests--make-session-update "user_message_chunk" "second prompt")
+                    (agent-shell-tests--make-session-update "agent_message_chunk" "intermediate")
+                    (agent-shell-tests--make-session-update "tool_call" "ignored")
+                    (agent-shell-tests--make-session-update "agent_message_chunk" "final answer")))
+      (agent-shell--restore-summary-handle-notification state notif))
+    (agent-shell--restore-summary-commit-in-flight
+     (map-elt state :restore-summary))
+    (should (equal (map-elt (map-elt state :restore-summary) :first-user)
+                   "Hello world"))
+    (should (equal (map-elt (map-elt state :restore-summary) :last-agent)
+                   "final answer"))))
+
+(ert-deftest agent-shell--restore-summary-handles-non-text-content ()
+  "Test summary accumulator falls back to a placeholder for non-text content."
+  (let ((state (list (cons :restore-summary nil))))
+    (agent-shell--restore-summary-init state)
+    (agent-shell--restore-summary-handle-notification
+     state
+     '((method . "session/update")
+       (params . ((update . ((sessionUpdate . "user_message_chunk")
+                             (content . ((type . "image")))))))))
+    (agent-shell--restore-summary-commit-in-flight
+     (map-elt state :restore-summary))
+    (should (equal (map-elt (map-elt state :restore-summary) :first-user)
+                   "[image]"))))
+
+(ert-deftest agent-shell--use-session-load-p-modes ()
+  "Test `agent-shell--use-session-load-p' across context/protocol combinations."
+  ;; summary mode forces session/load when supported
+  (let ((agent-shell-restore-context 'summary))
+    (should (agent-shell--use-session-load-p
+             '((:supports-session-load . t)
+               (:supports-session-resume . t))))
+    ;; summary falls back to resume when load unsupported
+    (should-not (agent-shell--use-session-load-p
+                 '((:supports-session-load . nil)
+                   (:supports-session-resume . t)))))
+  ;; full mode forces session/load when supported
+  (let ((agent-shell-restore-context 'full))
+    (should (agent-shell--use-session-load-p
+             '((:supports-session-load . t)
+               (:supports-session-resume . t)))))
+  ;; minimal mode prefers resume when available
+  (let ((agent-shell-restore-context 'minimal))
+    (should-not (agent-shell--use-session-load-p
+                 '((:supports-session-load . t)
+                   (:supports-session-resume . t))))
+    ;; minimal falls back to load when resume unavailable
+    (should (agent-shell--use-session-load-p
+             '((:supports-session-load . t)
+               (:supports-session-resume . nil))))))
+
+(ert-deftest agent-shell--initiate-session-summary-mode-uses-session-load ()
+  "Test that `summary' mode bypasses `session/resume' in favor of `session/load'."
+  (with-temp-buffer
+    (let* ((agent-shell-session-strategy 'latest)
+           (agent-shell-restore-context 'summary)
+           (requests '())
+           (session-init-called nil)
+           (state (list (cons :buffer (current-buffer))
+                        (cons :client 'test-client)
+                        (cons :session (list (cons :id nil)
+                                             (cons :mode-id nil)
+                                             (cons :modes nil)))
+                        (cons :supports-session-list t)
+                        (cons :supports-session-load t)
+                        (cons :supports-session-resume t)
+                        (cons :restore-summary nil)
+                        (cons :active-requests nil)
+                        (cons :event-subscriptions nil))))
+      (setq-local agent-shell--state state)
+      (cl-letf (((symbol-function 'agent-shell--state)
+                 (lambda () agent-shell--state))
+                ((symbol-function 'agent-shell--update-fragment)
+                 (lambda (&rest _args) nil))
+                ((symbol-function 'agent-shell--update-header-and-mode-line)
+                 (lambda () nil))
+                ((symbol-function 'agent-shell-cwd)
+                 (lambda () "/tmp"))
+                ((symbol-function 'agent-shell--resolve-path)
+                 (lambda (path) path))
+                ((symbol-function 'agent-shell--mcp-servers)
+                 (lambda () []))
+                ((symbol-function 'acp-send-request)
+                 (lambda (&rest args)
+                   (push args requests)
+                   (let* ((request (plist-get args :request))
+                          (method (map-elt request :method)))
+                     (pcase method
+                       ("session/list"
+                        (funcall (plist-get args :on-success)
+                                 '((sessions . [((sessionId . "session-abc")
+                                                 (cwd . "/tmp")
+                                                 (title . "Some session"))]))))
+                       ("session/load"
+                        (funcall (plist-get args :on-success) '()))
+                       (_ (error "Unexpected method: %s" method)))))))
+        (agent-shell--initiate-session
+         :shell-buffer (current-buffer)
+         :on-session-init (lambda ()
+                            (setq session-init-called t)))
+        (should (equal (mapcar (lambda (req)
+                                 (map-elt (plist-get req :request) :method))
+                               (nreverse requests))
+                       '("session/list" "session/load")))
+        (should session-init-called)
+        (should-not (map-elt agent-shell--state :restore-summary))))))
 
 (provide 'agent-shell-tests)
 ;;; agent-shell-tests.el ends here
