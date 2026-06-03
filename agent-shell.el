@@ -5344,6 +5344,7 @@ Returns an alist with:
          (content-fields
           (unless shallow
             (let* ((raw-content (with-temp-buffer
+                                  (set-buffer-multibyte nil)
                                   (insert-file-contents-literally file-path)
                                   (buffer-string)))
                    ;; Same heuristic that git uses
