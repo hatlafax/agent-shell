@@ -241,13 +241,8 @@ are applied.  Each function is called with a range alist containing:
   :type 'hook
   :group 'agent-shell)
 
-(defcustom agent-shell-highlight-blocks nil
-  "Whether or not to highlight source blocks.
-
-Highlighting source blocks is currently turned off by default
-as we need a more efficient mechanism.
-
-See https://github.com/xenodium/agent-shell/issues/119"
+(defcustom agent-shell-highlight-blocks t
+  "Whether or not to highlight source blocks."
   :type 'boolean
   :group 'agent-shell)
 
@@ -270,7 +265,7 @@ settled and `markdown-overlays' is no longer a dependency."
     (markdown-overlays-put)))
 
 (defcustom agent-shell-markdown-render-function
-  #'agent-shell--markdown-overlays-put
+  #'agent-shell-markdown-replace-markup
   "Function called to render markdown in the current narrowed buffer.
 
 The function accepts `&key render-images highlight-blocks' and is
@@ -289,10 +284,7 @@ Two implementations ship with agent-shell:
 
   - `agent-shell-markdown-replace-markup': in-place renderer that
     rewrites markup characters into propertized text (no
-    overlays).  Faster on streaming workloads but destroys the
-    source markdown in the buffer.  Currently always highlights
-    blocks and renders resolvable images; the keyword args are
-    accepted and ignored.
+    overlays).  Faster on streaming workloads by rewriting buffer.
 
 Set to a custom function to plug in a different renderer; the
 function should accept `&key render-images highlight-blocks'."
