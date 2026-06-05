@@ -6742,10 +6742,12 @@ Uses AGENT-CWD to shorten file paths where necessary."
                            (map-elt region :content))))
     processed-text))
 
-(cl-defun agent-shell--get-numbered-region (&key buffer from to cap)
+(cl-defun agent-shell--get-numbered-region (&key buffer from to cap trim)
   "Get region from BUFFER between FROM and TO locations.
 
-Expands to include entire lines.  Trims empty lines from beginning and end.
+Expands to include entire lines.
+
+When TRIM is non-nil, trim empty lines from beginning and end.
 
 If CAP is non-nil, truncate at CAP."
   (with-current-buffer buffer
@@ -6765,19 +6767,20 @@ If CAP is non-nil, truncate at CAP."
                   lines))
           (forward-line 1)
           (setq current-line (1+ current-line)))
-        ;; Reverse the lines and trim empty lines from start and end
         (let ((reversed-lines (nreverse lines)))
-          ;; Trim empty lines from the beginning
-          (while (and reversed-lines
-                      (string-match-p "^   [0-9]+:[[:space:]]*$" (car reversed-lines)))
-            (setq reversed-lines (cdr reversed-lines)))
-          ;; Trim empty lines from the end
-          (setq reversed-lines (nreverse reversed-lines))
-          (while (and reversed-lines
-                      (string-match-p "^   [0-9]+:[[:space:]]*$" (car reversed-lines)))
-            (setq reversed-lines (cdr reversed-lines)))
-          ;; Reverse back to correct order and apply cap before final join
-          (let ((final-lines (nreverse reversed-lines)))
+          (when trim
+            ;; Trim empty lines from the beginning
+            (while (and reversed-lines
+                        (string-match-p "^   [0-9]+:[[:space:]]*$" (car reversed-lines)))
+              (setq reversed-lines (cdr reversed-lines)))
+            ;; Trim empty lines from the end
+            (setq reversed-lines (nreverse reversed-lines))
+            (while (and reversed-lines
+                        (string-match-p "^   [0-9]+:[[:space:]]*$" (car reversed-lines)))
+              (setq reversed-lines (cdr reversed-lines)))
+            (setq reversed-lines (nreverse reversed-lines)))
+          ;; Apply cap before final join
+          (let ((final-lines reversed-lines))
             (if-let (((and cap (> (length final-lines) cap)))
                      (full-text (string-join final-lines "\n"))
                      (id (gensym "agent-shell-region-")))
@@ -6831,7 +6834,8 @@ TEXT is the error message."
                                (numbered-region (agent-shell--get-numbered-region
                                                  :buffer buffer
                                                  :from context-beg
-                                                 :to context-end))
+                                                 :to context-end
+                                                 :trim t))
                                ;; Replace the line number prefix for the error line
                                (error-line-prefix (format "   %d:" line))
                                (highlight-prefix (format "-> %d:" line)))

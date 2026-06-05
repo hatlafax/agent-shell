@@ -438,6 +438,35 @@
     (let ((uris (agent-shell--collect-attached-files blocks)))
       (should (= (length uris) 2)))))
 
+(ert-deftest agent-shell--get-numbered-region-test ()
+  "Test `agent-shell--get-numbered-region' preserves selection and respects TRIM."
+  (with-temp-buffer
+    ;; Lines: 1="", 2="foo", 3="", 4="bar", 5="" (trailing newline).
+    (insert "
+foo
+
+bar
+")
+    ;; Without TRIM: empty boundary lines (1 and 5) are preserved.
+    (should (equal (agent-shell--get-numbered-region
+                    :buffer (current-buffer)
+                    :from (point-min)
+                    :to (point-max))
+                   "   1: 
+   2: foo
+   3: 
+   4: bar
+   5: "))
+    ;; With TRIM: empty boundary lines are stripped, internal empty kept.
+    (should (equal (agent-shell--get-numbered-region
+                    :buffer (current-buffer)
+                    :from (point-min)
+                    :to (point-max)
+                    :trim t)
+                   "   2: foo
+   3: 
+   4: bar"))))
+
 (ert-deftest agent-shell--expand-truncated-regions-test ()
   "Test `agent-shell--expand-truncated-regions' substitutes marked spans for their full text."
   ;; No marked regions: prompt unchanged.
