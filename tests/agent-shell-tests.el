@@ -438,6 +438,65 @@
     (let ((uris (agent-shell--collect-attached-files blocks)))
       (should (= (length uris) 2)))))
 
+(ert-deftest agent-shell--get-numbered-region-test ()
+  "Test `agent-shell--get-numbered-region' preserves selection and respects TRIM."
+  (with-temp-buffer
+    ;; Lines: 1="", 2="foo", 3="", 4="bar", 5="" (trailing newline).
+    (insert "
+foo
+
+bar
+")
+    ;; Without TRIM: empty boundary lines (1 and 5) are preserved.
+    (should (equal (agent-shell--get-numbered-region
+                    :buffer (current-buffer)
+                    :from (point-min)
+                    :to (point-max))
+                   "   1: 
+   2: foo
+   3: 
+   4: bar
+   5: "))
+    ;; With TRIM: empty boundary lines are stripped, internal empty kept.
+    (should (equal (agent-shell--get-numbered-region
+                    :buffer (current-buffer)
+                    :from (point-min)
+                    :to (point-max)
+                    :trim t)
+                   "   2: foo
+   3: 
+   4: bar"))))
+
+(ert-deftest agent-shell--expand-truncated-regions-test ()
+  "Test `agent-shell--expand-truncated-regions' substitutes marked spans for their full text."
+  ;; No marked regions: prompt unchanged.
+  (should (equal (agent-shell--expand-truncated-regions "plain prompt") "plain prompt"))
+
+  ;; Single marked region: span replaced with `agent-shell-region-text'.
+  (let* ((preview (propertize "1: foo\n   Expand..."
+                              'agent-shell-region-id 'r1
+                              'agent-shell-region-text "1: foo\n2: bar\n3: baz"))
+         (prompt (concat "before " preview " after")))
+    (should (equal (agent-shell--expand-truncated-regions prompt)
+                   "before 1: foo\n2: bar\n3: baz after")))
+
+  ;; Multiple marked regions: each expanded; forward iteration handles all.
+  (let* ((a (propertize "A-preview"
+                        'agent-shell-region-id 'a
+                        'agent-shell-region-text "A-full"))
+         (b (propertize "B-preview"
+                        'agent-shell-region-id 'b
+                        'agent-shell-region-text "B-full-LONGER"))
+         (prompt (concat "x " a " y " b " z")))
+    (should (equal (agent-shell--expand-truncated-regions prompt)
+                   "x A-full y B-full-LONGER z")))
+
+  ;; Region with id but missing text property: span left alone.
+  (let ((prompt (concat "keep "
+                        (propertize "preview" 'agent-shell-region-id 'r)
+                        " me")))
+    (should (equal (agent-shell--expand-truncated-regions prompt) "keep preview me"))))
+
 (ert-deftest agent-shell--send-command-integration-test ()
   "Integration test: verify agent-shell--send-command calls ACP correctly."
   (let ((sent-request nil)
@@ -1828,6 +1887,17 @@ code block content
              (lambda () nil)))
     (should-not (agent-shell--prompt-select-session nil))))
 
+(ert-deftest agent-shell--validate-session-strategy-test ()
+  "Test `agent-shell--validate-session-strategy' accepts supported values
+and rejects `new-deferred' and other unknown values."
+  (should-not (agent-shell--validate-session-strategy 'new))
+  (should-not (agent-shell--validate-session-strategy 'latest))
+  (should-not (agent-shell--validate-session-strategy 'prompt))
+  (should-error (agent-shell--validate-session-strategy 'new-deferred)
+                :type 'user-error)
+  (should-error (agent-shell--validate-session-strategy 'bogus)
+                :type 'user-error))
+
 (ert-deftest agent-shell--initiate-session-strategy-new-skips-list-load ()
   "Test `agent-shell--initiate-session' skips list/load when strategy is `new'."
   (with-temp-buffer
@@ -2578,6 +2648,112 @@ Based on ACP traffic from https://github.com/xenodium/agent-shell/issues/415."
             '((:title . "Bash")
               (:raw-input . ((command . "ls -la")))
               (:kind . "execute"))))))
+
+(ert-deftest agent-shell--permission-title-content-folded-test ()
+  "Append ACP `content' text after the title.
+Based on Jane Street AIDE permission requests from
+https://github.com/xenodium/agent-shell-js/issues/27 where
+structured `content' carries the user-facing detail and there
+is no `rawInput'."
+  (should (equal
+           "Link Feature\n\nAllow linking to this session?"
+           (agent-shell--permission-title
+            :tool-call
+            `((:title . "Link Feature")
+              (:kind . "other")
+              (:content . [((type . "content")
+                            (content (type . "text")
+                                     (text . "Allow linking to this session?")))]))))))
+
+(ert-deftest agent-shell--permission-title-content-dedup-against-title-test ()
+  "Skip `content' text already mentioned in the title.
+Claude populates `content' with the same string as
+`rawInput.description'; we should not duplicate the description
+when it is already in the rendered text."
+  (should (equal
+           "```console\nping -c 4 localhost\n```\n\nPing localhost 4 times"
+           (agent-shell--permission-title
+            :tool-call
+            `((:title . "ping -c 4 localhost")
+              (:kind . "execute")
+              (:raw-input . ((command . "ping -c 4 localhost")
+                             (description . "Ping localhost 4 times")))
+              (:content . [((type . "content")
+                            (content (type . "text")
+                                     (text . "Ping localhost 4 times")))]))))))
+
+(ert-deftest agent-shell--permission-title-content-substring-skipped-test ()
+  "Skip `content' text that is a substring of the existing title."
+  (should (equal
+           "Read foo.rs"
+           (agent-shell--permission-title
+            :tool-call
+            `((:title . "Read foo.rs")
+              (:kind . "read")
+              (:content . [((type . "content")
+                            (content (type . "text")
+                                     (text . "Read foo.rs")))]))))))
+
+(ert-deftest agent-shell--permission-title-locations-appended-test ()
+  "Append `locations' paths not already mentioned in the title."
+  (should (equal
+           "Search-url Fetch (https://google.com)"
+           (agent-shell--permission-title
+            :tool-call
+            `((:title . "Search-url Fetch")
+              (:kind . "other")
+              (:locations . [((path . "https://google.com"))]))))))
+
+(ert-deftest agent-shell--permission-title-locations-skipped-when-in-title-test ()
+  "Skip `locations' paths already present in the title."
+  (should (equal
+           "`echo hi`"
+           (agent-shell--permission-title
+            :tool-call
+            `((:title . "`echo hi`")
+              (:kind . "execute")
+              (:locations . [((path . "echo hi"))]))))))
+
+(ert-deftest agent-shell--permission-title-locations-skipped-when-in-content-test ()
+  "Skip `locations' paths already embedded inside `content' text.
+AIDE's url_fetch request sends the URL in both `content' (inside
+a JSON code block) and `locations'; only one copy should render."
+  (should (equal
+           "Search-url Fetch\n\nCall url_fetch with {\"url\": \"https://google.com\"}"
+           (agent-shell--permission-title
+            :tool-call
+            `((:title . "Search-url Fetch")
+              (:kind . "other")
+              (:content . [((type . "content")
+                            (content (type . "text")
+                                     (text . "Call url_fetch with {\"url\": \"https://google.com\"}")))])
+              (:locations . [((path . "https://google.com"))]))))))
+
+(ert-deftest agent-shell--permission-title-locations-basename-skipped-test ()
+  "Skip `locations' paths whose basename was already shown via `rawInput'.
+Some agents populate both `rawInput.filepath' (which we render as
+basename) and `locations' (which has the absolute path); only one
+copy should render."
+  (should (equal
+           "edit (foo.rs)"
+           (agent-shell--permission-title
+            :tool-call
+            `((:title . "edit")
+              (:kind . "edit")
+              (:raw-input . ((filepath . "/home/user/foo.rs")))
+              (:locations . [((path . "/home/user/foo.rs"))]))))))
+
+(ert-deftest agent-shell--permission-title-empty-content-and-locations-test ()
+  "Empty `content' / `locations' vectors should not affect the title.
+Gemini sends these fields as empty arrays."
+  (should (equal
+           "git log --reverse | head -n 1"
+           (agent-shell--permission-title
+            :tool-call
+            `((:title . "git log --reverse | head -n 1")
+              (:kind . "execute")
+              (:content . [])
+              (:locations . []))))))
 
 (ert-deftest agent-shell-restart-preserves-default-directory ()
   "Restart should use the shell's directory, not the fallback buffer's.

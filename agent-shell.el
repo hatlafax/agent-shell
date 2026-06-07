@@ -4,10 +4,10 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/agent-shell
-;; Version: 0.53.1
+;; Version: 0.54.1
 ;; Package-Requires: ((emacs "29.1") (shell-maker "0.92.2") (acp "0.12.2"))
 
-(defconst agent-shell--version "0.53.1")
+(defconst agent-shell--version "0.54.1")
 
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -47,6 +47,7 @@
 (require 'dired)
 (require 'diff)
 (require 'json)
+(require 'mailcap)
 (require 'map)
 (unless (require 'markdown-overlays nil 'noerror)
   (error "Please update 'shell-maker' to v0.91.2 or newer"))
@@ -241,13 +242,8 @@ are applied.  Each function is called with a range alist containing:
   :type 'hook
   :group 'agent-shell)
 
-(defcustom agent-shell-highlight-blocks nil
-  "Whether or not to highlight source blocks.
-
-Highlighting source blocks is currently turned off by default
-as we need a more efficient mechanism.
-
-See https://github.com/xenodium/agent-shell/issues/119"
+(defcustom agent-shell-highlight-blocks t
+  "Whether or not to highlight source blocks."
   :type 'boolean
   :group 'agent-shell)
 
@@ -270,7 +266,7 @@ settled and `markdown-overlays' is no longer a dependency."
     (markdown-overlays-put)))
 
 (defcustom agent-shell-markdown-render-function
-  #'agent-shell--markdown-overlays-put
+  #'agent-shell-markdown-replace-markup
   "Function called to render markdown in the current narrowed buffer.
 
 The function accepts `&key render-images highlight-blocks' and is
@@ -289,10 +285,7 @@ Two implementations ship with agent-shell:
 
   - `agent-shell-markdown-replace-markup': in-place renderer that
     rewrites markup characters into propertized text (no
-    overlays).  Faster on streaming workloads but destroys the
-    source markdown in the buffer.  Currently always highlights
-    blocks and renders resolvable images; the keyword args are
-    accepted and ignored.
+    overlays).  Faster on streaming workloads by rewriting buffer.
 
 Set to a custom function to plug in a different renderer; the
 function should accept `&key render-images highlight-blocks'."
@@ -631,18 +624,7 @@ configuration alist for backwards compatibility."
                         :key-type symbol :value-type sexp))
   :group 'agent-shell)
 
-(defcustom agent-shell-prefer-session-resume t
-  "Prefer ACP session resume over session load when both are available.
-
-When non-nil (and supported by agent), prefer ACP session resumes over loading."
-  :type 'boolean
-  :group 'agent-shell)
-
-(make-obsolete-variable 'agent-shell-prefer-session-resume
-                        'agent-shell-session-restore-strategy
-                        "agent-shell 0.52")
-
-(defcustom agent-shell-session-restore-strategy 'minimal
+(defcustom agent-shell-session-restore-verbosity 'minimal
   "How much prior context to show when restoring a session.
 
   `minimal': Show only the session title (default).  Uses
@@ -662,20 +644,44 @@ to `minimal' behavior."
                  (const :tag "Full replay" full))
   :group 'agent-shell)
 
+(defvar agent-shell-session-restore-strategy nil
+  "Obsolete.  Use `agent-shell-session-restore-verbosity' instead.
+
+Kept bound so init files that `setq' the old name don't get a
+`void-variable' error.  `agent-shell--start' detects a non-nil
+value and signals a migration error.")
+
+(make-obsolete-variable 'agent-shell-session-restore-strategy
+                        'agent-shell-session-restore-verbosity
+                        "agent-shell 0.54")
+
+(defun agent-shell--validate-session-strategy (value)
+  "Signal an error if VALUE is not a supported `agent-shell-session-strategy'.
+
+`new-deferred' was removed in agent-shell 0.54.  Use `new' for a fresh
+session without prompting, or `prompt' to choose."
+  (unless (memq value '(new latest prompt))
+    (user-error
+     (concat
+      "agent-shell-session-strategy value `%s' is no longer supported.\n"
+      "Use `new' for a fresh session, `latest' to load the most recent,\n"
+      "or `prompt' to choose.")
+     value)))
+
 (defcustom agent-shell-session-strategy 'prompt
   "How to handle sessions when starting a new shell.
 
 Available values:
 
-  `new-deferred': Start a new session, but defer initialization until the
-                  first prompt is submitted.
   `new': Always start a new session.
   `latest': Always load/resume the latest session.
   `prompt': Always prompt to choose a session (or start a new one)."
-  :type '(choice (const :tag "New session, deferred init" new-deferred)
-                 (const :tag "Always start new session" new)
+  :type '(choice (const :tag "Always start new session" new)
                  (const :tag "Load latest session" latest)
                  (const :tag "Prompt for session" prompt))
+  :set (lambda (sym value)
+         (agent-shell--validate-session-strategy value)
+         (set-default sym value))
   :group 'agent-shell)
 
 (defvar agent-shell-idle-timeout 30
@@ -1398,7 +1404,7 @@ If DELETE is non-nil, delete the text between START and END."
             (exclude (seq-find (lambda (ov)
                                  (memq (overlay-get ov 'markdown-overlays-markup-type)
                                        '(fence language inline-code
-                                         bold italic strikethrough header)))
+                                               bold italic strikethrough header)))
                                (overlays-at pos))))
         (unless exclude
           (setq text (concat text (buffer-substring pos (min next end)))))
@@ -1417,6 +1423,7 @@ If DELETE is non-nil, delete the text between START and END."
   "<backtab>" #'agent-shell-previous-item
   "n" #'agent-shell-next-item
   "p" #'agent-shell-previous-item
+  "r" #'agent-shell-quote-region
   "C-<tab>" #'agent-shell-cycle-session-mode
   "C-c C-c" #'agent-shell-interrupt
   "C-c C-m" #'agent-shell-set-session-mode
@@ -1834,6 +1841,8 @@ COMMAND, when present, may be a shell command string or an argv vector."
                         (list (cons :command command)))
                       (when-let* ((raw-input (map-nested-elt acp-notification '(params update rawInput))))
                         (list (cons :raw-input raw-input)))
+                      (when-let* ((locations (map-nested-elt acp-notification '(params update locations))))
+                        (list (cons :locations locations)))
                       (when-let* ((diff (agent-shell--make-diff-info
                                          :acp-tool-call (map-nested-elt acp-notification '(params update)))))
                         (list (cons :diff diff)))))
@@ -2009,6 +2018,10 @@ COMMAND, when present, may be a shell command string or an argv vector."
                                                    (map-nested-elt acp-request '(params options)))))
                   (when-let* ((raw-input (map-nested-elt acp-request '(params toolCall rawInput))))
                     (list (cons :raw-input raw-input)))
+                  (when-let* ((content (map-nested-elt acp-request '(params toolCall content))))
+                    (list (cons :content content)))
+                  (when-let* ((locations (map-nested-elt acp-request '(params toolCall locations))))
+                    (list (cons :locations locations)))
                   (when-let* ((diff (agent-shell--make-diff-info
                                      :acp-tool-call (map-nested-elt acp-request '(params toolCall)))))
                     (list (cons :diff diff)))))
@@ -2726,7 +2739,7 @@ for details."
         file-path))))))
 
 (defcustom agent-shell-status-kind-label-function
-  #'agent-shell--default-status-kind-label
+  #'agent-shell--inverse-icon-status-kind-label
   "Function to render status and kind labels.
 
 Called with two arguments: STATUS (string or nil) and KIND (string or nil).
@@ -2778,7 +2791,7 @@ Returns propertized labels in :status and :title propertized."
                     ;; "[read] file.el"
                     (if (and (map-elt tool-call :kind)
                              (string-match-p (concat "\\`" (regexp-quote
-                                                           (map-elt tool-call :kind)) " ")
+                                                            (map-elt tool-call :kind)) " ")
                                              (downcase text)))
                         (string-trim-left (substring text (length (map-elt tool-call :kind))))
                       text)))
@@ -2924,6 +2937,10 @@ OUTGOING-REQUEST-DECORATOR is passed through to `acp-make-client'."
 
 Please use 'agent-shell-transcript-file-path-function and unbind old
 variable (see makunbound)"))
+  (when agent-shell-session-restore-strategy
+    (user-error "Please migrate agent-shell-session-restore-strategy to agent-shell-session-restore-verbosity"))
+  (agent-shell--validate-session-strategy
+   (or session-strategy agent-shell-session-strategy))
   (let* ((shell-maker-config (agent-shell--make-shell-maker-config
                               :prompt (map-elt config :shell-prompt)
                               :prompt-regexp (map-elt config :shell-prompt-regexp)))
@@ -3023,6 +3040,17 @@ variable (see makunbound)"))
          :config shell-maker--config
          :output (funcall (map-elt config :welcome-function)
                           shell-maker--config)))
+      ;; TODO: Remove all `new-deferred' code paths.
+      ;; The value was removed from `agent-shell-session-strategy' in 0.54.1
+      ;; (see `agent-shell--validate-session-strategy'), but the branches
+      ;; were left behind temporarily.  Sites to clean up: this branch,
+      ;; the `restart' branch (`strategy' let-binding),
+      ;; the prompt-readiness guards in `agent-shell--handle' and
+      ;; `agent-shell-viewport-compose-send', `agent-shell--shell-buffer'
+      ;; (the deferred picker), `agent-shell--initiate-session-list-and-load',
+      ;; the `session-strategy' check in `agent-shell--start-acp-session',
+      ;; the `prompt'/`new'/`latest' subscriptions below, and
+      ;; `agent-shell--insert-to-shell-buffer'.
       (if (eq agent-shell-session-strategy 'new-deferred)
           ;; Show prompt now (unbootstrapped).
           (shell-maker-finish-output
@@ -3315,23 +3343,29 @@ APPEND and CREATE-NEW control update behavior."
 (defun agent-shell-next-item ()
   "Go to next item.
 
-Could be a prompt or an expandable item.
+Could be a prompt or an expandable item.  When point is inside a
+rendered markdown table, navigate to the next table cell instead.
 If point is at the input prompt and a character key was pressed,
 insert the character instead."
   (declare (modes agent-shell-mode))
   (interactive)
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
-  ;; Check if at prompt and inserting a character
-  ;; (Ignore special keys like TAB/Shift-TAB).
-  (if (and (not (shell-maker-busy))
-           (shell-maker-point-at-last-prompt-p)
-           (integerp last-command-event)
-           (> (length (this-command-keys-vector)) 0)
-           ;; Ensure invoked using a key binding.
-           (eq (key-binding (this-command-keys-vector)) this-command))
-      ;; At prompt, insert character.
-      (self-insert-command 1)
+  (cond
+   ;; Check if at prompt and inserting a character
+   ;; (Ignore special keys like TAB/Shift-TAB).
+   ((and (not (shell-maker-busy))
+         (shell-maker-point-at-last-prompt-p)
+         (integerp last-command-event)
+         (> (length (this-command-keys-vector)) 0)
+         ;; Ensure invoked using a key binding.
+         (eq (key-binding (this-command-keys-vector)) this-command))
+    ;; At prompt, insert character.
+    (self-insert-command 1))
+   ;; Inside a rendered markdown table — navigate cells.
+   ((get-text-property (point) 'agent-shell-markdown-table-source)
+    (agent-shell-markdown-table-next-cell))
+   (t
     ;; Otherwise navigate.
     (let* ((prompt-pos (save-mark-and-excursion
                          (when (comint-next-prompt 1)
@@ -3347,28 +3381,34 @@ insert the character instead."
         (deactivate-mark)
         (goto-char next-pos)
         (when (eq next-pos prompt-pos)
-          (comint-skip-prompt))))))
+          (comint-skip-prompt)))))))
 
 (defun agent-shell-previous-item ()
   "Go to previous item.
 
-Could be a prompt or an expandable item.
+Could be a prompt or an expandable item.  When point is inside a
+rendered markdown table, navigate to the previous table cell instead.
 If point is at the input prompt and a character key was pressed,
 insert the character instead."
   (declare (modes agent-shell-mode))
   (interactive)
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
-  ;; Check if at prompt and inserting a character
-  ;; (Ignore special keys like TAB/Shift-TAB).
-  (if (and (not (shell-maker-busy))
-           (shell-maker-point-at-last-prompt-p)
-           (integerp last-command-event)
-           (> (length (this-command-keys-vector)) 0)
-           ;; Ensure invoked using a key binding.
-           (eq (key-binding (this-command-keys-vector)) this-command))
-      ;; At prompt, insert character.
-      (self-insert-command 1)
+  (cond
+   ;; Check if at prompt and inserting a character
+   ;; (Ignore special keys like TAB/Shift-TAB).
+   ((and (not (shell-maker-busy))
+         (shell-maker-point-at-last-prompt-p)
+         (integerp last-command-event)
+         (> (length (this-command-keys-vector)) 0)
+         ;; Ensure invoked using a key binding.
+         (eq (key-binding (this-command-keys-vector)) this-command))
+    ;; At prompt, insert character.
+    (self-insert-command 1))
+   ;; Inside a rendered markdown table — navigate cells.
+   ((get-text-property (point) 'agent-shell-markdown-table-source)
+    (agent-shell-markdown-table-previous-cell))
+   (t
     ;; Otherwise navigate.
     (let* ((current-pos (point))
            (prompt-pos (save-mark-and-excursion
@@ -3393,7 +3433,7 @@ insert the character instead."
         (deactivate-mark)
         (goto-char next-pos)
         (when (eq next-pos prompt-pos)
-          (comint-skip-prompt))))))
+          (comint-skip-prompt)))))))
 
 (cl-defun agent-shell-make-environment-variables (&rest vars &key inherit-env load-env &allow-other-keys)
   "Return VARS in the form expected by `process-environment'.
@@ -3542,7 +3582,27 @@ When provided, included in help-echo tooltips."
   (unless state
     (error "STATE is required"))
   (let* ((header-model (agent-shell--make-header-model state :position position :status status :bindings bindings))
-         (text-header (format " %s%s%s%s @ %s%s%s%s%s%s"
+         (help-binding (seq-find (lambda (b)
+                                   (equal (map-elt b :description) "Help"))
+                                 (map-elt header-model :bindings)))
+         (help-chunk (when help-binding
+                       (concat (propertize (map-elt help-binding :key)
+                                           'face 'help-key-binding)
+                               " "
+                               (map-elt help-binding :description))))
+         (text-header (format " %s%s%s%s%s ➤ %s%s%s%s%s"
+                              (cond
+                               ((and (map-elt header-model :position)
+                                     (map-elt header-model :status))
+                                (concat (map-elt header-model :position) " "
+                                        (map-elt header-model :status)
+                                        (when help-chunk (concat " " help-chunk))
+                                        " ➤ "))
+                               ((map-elt header-model :position)
+                                (concat (map-elt header-model :position)
+                                        (when help-chunk (concat " " help-chunk))
+                                        " ➤ "))
+                               (t ""))
                               (propertize (map-elt header-model :buffer-name)
                                           'font-lock-face 'font-lock-variable-name-face)
                               (if (map-elt header-model :model-name)
@@ -3581,9 +3641,6 @@ When provided, included in help-echo tooltips."
                                                                                      (agent-shell--mode-line-mode-menu))
                                                                          map)))
                                 "")
-                              (if (map-elt header-model :position)
-                                  (concat (map-elt header-model :position) " ➤ ")
-                                "")
                               (propertize (map-elt header-model :project-name) 'font-lock-face 'font-lock-string-face)
                               (if (map-elt header-model :session-id)
                                   (concat " ➤ " (map-elt header-model :session-id))
@@ -3594,7 +3651,8 @@ When provided, included in help-echo tooltips."
                                             " ")
                                           (map-elt header-model :context-indicator))
                                 "")
-                              (if (map-elt header-model :status)
+                              (if (and (map-elt header-model :status)
+                                       (not (map-elt header-model :position)))
                                   (concat " ➤ " (map-elt header-model :status))
                                 "")
                               (if (map-elt header-model :busy-indicator-frame)
@@ -4848,7 +4906,7 @@ Falls back to latest session in batch mode (e.g. tests)."
 (defun agent-shell--use-session-load-p (state)
   "Return non-nil when STATE should restore via `session/load'.
 
-`agent-shell-session-restore-strategy' decides the protocol:
+`agent-shell-session-restore-verbosity' decides the protocol:
 
   `first-last' and `full' force `session/load' when the agent
   advertises it (so a replay is available to read from); they
@@ -4857,7 +4915,7 @@ Falls back to latest session in batch mode (e.g. tests)."
   `minimal' uses `session/resume' when available, falling back
   to `session/load' only if the agent doesn't support resume."
   (cond
-   ((and (memq agent-shell-session-restore-strategy '(first-last full))
+   ((and (memq agent-shell-session-restore-verbosity '(first-last full))
          (map-elt state :supports-session-load))
     t)
    ((map-elt state :supports-session-resume)
@@ -4868,10 +4926,10 @@ Falls back to latest session in batch mode (e.g. tests)."
 (defun agent-shell--restore-summary-mode-p (state)
   "Return non-nil when STATE should accumulate a restore summary.
 
-Only true when `agent-shell-session-restore-strategy' is `first-last' and the
+Only true when `agent-shell-session-restore-verbosity' is `first-last' and the
 agent supports `session/load' (so a replay is available to read
 from)."
-  (and (eq agent-shell-session-restore-strategy 'first-last)
+  (and (eq agent-shell-session-restore-verbosity 'first-last)
        (map-elt state :supports-session-load)))
 
 (defun agent-shell--restore-summary-init (state)
@@ -5293,13 +5351,13 @@ Returns list of alists with :start, :end, and :path for each mention."
                         (mimeType . ,(map-elt file :mime-type))
                         (uri . ,(concat "file://" resolved-path)))
                       content-blocks))
-               ;; Text file, small enough, text file capabilities granted and embeddedContext supported
+               ;; Small enough, text file capabilities granted and embeddedContext supported
                ;; Use ContentBlock::Resource
                ((and agent-shell-text-file-capabilities supports-embedded-context (map-elt file :size)
                      (< (map-elt file :size) agent-shell-embed-file-size-limit))
                 (push `((type . "resource")
                         (resource . ((uri . ,(concat "file://" resolved-path))
-                                     (text . ,(map-elt file :content))
+                                     (,(if (map-elt file :base64-p) 'blob 'text) . ,(map-elt file :content))
                                      (mimeType . ,(map-elt file :mime-type)))))
                       content-blocks))
                ;; File too large, no text file capabilities granted or embeddedContext not supported
@@ -5336,30 +5394,33 @@ Returns an alist with:
   :size - file size in bytes
   :extension - file extension (lowercase)
   :mime-type - MIME type based on extension
-  :base64-p - t if content is base64-encoded (binary image), nil otherwise
+  :base64-p - t if content is base64-encoded (binary file), nil otherwise
   :content - file content (omitted when SHALLOW is non-nil)"
   (let* ((ext (downcase (or (file-name-extension file-path) "")))
-         (mime-type (or (agent-shell--image-type-to-mime file-path)
-                        "text/plain"))
-         ;; Only treat supported binary image formats as binary
-         ;; SVG is XML/text and should not be base64-encoded
-         ;; API only supports: image/png, image/jpeg, image/gif, image/webp
-         (is-binary (member mime-type '("image/png" "image/jpeg" "image/gif" "image/webp")))
          (file-size (file-attribute-size (file-attributes file-path)))
-         (content (unless shallow
-                    (with-temp-buffer
-                      (if is-binary
-                          (progn
-                            (insert-file-contents-literally file-path)
-                            (base64-encode-string (buffer-string) t))
-                        (insert-file-contents file-path)
-                        (buffer-string))))))
-    (append (list (cons :size file-size)
-                  (cons :extension ext)
-                  (cons :mime-type mime-type)
-                  (cons :base64-p is-binary))
-            (unless shallow
-              (list (cons :content content))))))
+         (mime-type (or (agent-shell--image-type-to-mime file-path)
+                        (mailcap-extension-to-mime ext)))
+         (content-fields
+          (unless shallow
+            (let* ((raw-content (with-temp-buffer
+                                  (set-buffer-multibyte nil)
+                                  (insert-file-contents-literally file-path)
+                                  (buffer-string)))
+                   ;; Same heuristic that git uses
+                   (is-binary (string-search "\0" raw-content))
+                   (content (if is-binary
+                                (base64-encode-string raw-content t)
+                              (decode-coding-string raw-content 'undecided t))))
+              ;; Set a better default MIME type for unknown extensions
+              ;; based on the content
+              (unless mime-type
+                (setq mime-type (if is-binary "application/octet-stream" "text/plain")))
+              `((:base64-p . ,is-binary)
+                (:content . ,content))))))
+    `((:size . ,file-size)
+      (:extension . ,ext)
+      (:mime-type . ,(or mime-type "text/plain"))
+      ,@content-fields)))
 
 (cl-defun agent-shell--load-image (&key file-path (max-width 200))
   "Load image from FILE-PATH and return the image object.
@@ -5431,12 +5492,32 @@ first-prompt title is left in place."
                                  (append (or (map-elt acp-response 'sessions) '()) nil))))
          (agent-shell--set-session-title (map-elt acp-session 'title)))))))
 
+(defun agent-shell--expand-truncated-regions (prompt)
+  "Expand truncated regions in PROMPT marked with `agent-shell-region-id'.
+Each marked span is replaced by its `agent-shell-region-text' value."
+  (with-temp-buffer
+    (insert prompt)
+    (goto-char (point-min))
+    (let (match)
+      (while (setq match (text-property-search-forward
+                          'agent-shell-region-id nil
+                          (lambda (_ val) val)))
+        (when-let* ((full-text (get-text-property
+                                (prop-match-beginning match)
+                                'agent-shell-region-text))
+                    (beg (prop-match-beginning match)))
+          (delete-region beg (prop-match-end match))
+          (goto-char beg)
+          (insert full-text))))
+    (buffer-string)))
+
 (cl-defun agent-shell--send-command (&key prompt shell-buffer)
   "Send PROMPT to agent using SHELL-BUFFER."
-  (let* ((content-blocks (condition-case nil
-                             (agent-shell--build-content-blocks prompt)
+  (let* ((expanded-prompt (agent-shell--expand-truncated-regions prompt))
+         (content-blocks (condition-case nil
+                             (agent-shell--build-content-blocks expanded-prompt)
                            (error `[((type . "text")
-                                     (text . ,(substring-no-properties prompt)))])))
+                                     (text . ,(substring-no-properties expanded-prompt)))])))
          (attached-files (agent-shell--collect-attached-files content-blocks)))
     (when attached-files
       (agent-shell--display-attached-files attached-files))
@@ -5458,7 +5539,7 @@ first-prompt title is left in place."
     (agent-shell--append-transcript
      :text (format "## User (%s)\n\n%s\n\n"
                    (format-time-string "%F %T")
-                   (agent-shell--indent-markdown-headers prompt))
+                   (agent-shell--indent-markdown-headers expanded-prompt))
      :file-path agent-shell--transcript-file)
 
     (when-let* ((viewport-buffer (agent-shell-viewport--buffer
@@ -5978,8 +6059,14 @@ for details."
 (cl-defun agent-shell--permission-title (&key tool-call)
   "Build a display title for a permission dialog from TOOL-CALL.
 
-Extracts the tool call title, command, and filepath from TOOL-CALL
-and combines them into a user-facing string.
+Combines the ACP ToolCall \\='title, \\='rawInput-derived command and
+filepath, and the structured \\='content and \\='locations fields
+(when the agent provides them) into a user-facing string.
+
+Simple substring deduplication avoids showing the same info
+twice when an agent populates both \\='rawInput and \\='content,
+or when a \\='locations path is already mentioned in title or
+\\='content.
 
 For example:
 
@@ -5996,6 +6083,22 @@ For example:
                        (map-elt raw-input 'fileName)
                        (map-elt raw-input 'path)
                        (map-elt raw-input 'file_path)))
+         (content-texts
+          (delq nil
+                (mapcar (lambda (item)
+                          (when-let* ((item-text (map-nested-elt item '(content text)))
+                                      ((stringp item-text))
+                                      ((not (string-empty-p item-text))))
+                            item-text))
+                        (append (map-elt tool-call :content) nil))))
+         (location-paths
+          (delq nil
+                (mapcar (lambda (loc)
+                          (when-let* ((path (map-elt loc 'path))
+                                      ((stringp path))
+                                      ((not (string-empty-p path))))
+                            path))
+                        (append (map-elt tool-call :locations) nil))))
          ;; Some agents don't include the command in the
          ;; permission/tool call title, so it's hard to know
          ;; what the permission is actually allowing.
@@ -6019,11 +6122,35 @@ For example:
                    filename)))
     ;; Fence execute commands so markdown-overlays
     ;; renders them verbatim, not as markdown.
-    (if (and text
-             (equal text command)
-             (equal (map-elt tool-call :kind) "execute"))
-        (concat "```console\n" text "\n```")
-      text)))
+    (when (and text
+               (equal text command)
+               (equal (map-elt tool-call :kind) "execute"))
+      (setq text (concat "```console\n" text "\n```")))
+    ;; Fold in ACP `content' text blocks attached to the tool call.
+    ;; Skip blocks whose text is already a substring of what we
+    ;; have (e.g. Claude mirrors `rawInput.description' in `content').
+    (dolist (content-text content-texts)
+      (unless (and text
+                   (string-match-p (regexp-quote content-text) text))
+        (setq text (if text
+                       (concat text "\n\n" content-text)
+                     content-text))))
+    ;; Fold in ACP `locations' paths.  Skip paths (or their
+    ;; basenames) already present in the displayed text — covers
+    ;; both filesystem paths the `rawInput' branch already
+    ;; surfaced and URLs/commands embedded in `content' text.
+    (dolist (path location-paths)
+      (when-let* ((basename (file-name-nondirectory path))
+                  ((or (not text)
+                       (not (string-match-p (regexp-quote path) text))))
+                  ((or (not text)
+                       (equal basename path)
+                       (string-empty-p basename)
+                       (not (string-match-p (regexp-quote basename) text)))))
+        (setq text (if text
+                       (concat (string-trim-right text) " (" path ")")
+                     path))))
+    text))
 
 (cl-defun agent-shell--make-tool-call-permission-text (&key tool-call tool-call-id client state)
   "Create text to render permission dialog for TOOL-CALL.
@@ -6423,7 +6550,7 @@ Returns non-nil if a permission button was found, nil otherwise."
                          (when-let* ((next-change (next-single-property-change (point) 'agent-shell-permission-button)))
                            (goto-char next-change)))
                        (when-let* ((next (text-property-search-forward
-                                         'agent-shell-permission-button t t)))
+                                          'agent-shell-permission-button t t)))
                          (prop-match-beginning next)))))
     (deactivate-mark)
     (goto-char found)
@@ -6646,10 +6773,12 @@ Uses AGENT-CWD to shorten file paths where necessary."
                            (map-elt region :content))))
     processed-text))
 
-(cl-defun agent-shell--get-numbered-region (&key buffer from to cap)
+(cl-defun agent-shell--get-numbered-region (&key buffer from to cap trim)
   "Get region from BUFFER between FROM and TO locations.
 
-Expands to include entire lines.  Trims empty lines from beginning and end.
+Expands to include entire lines.
+
+When TRIM is non-nil, trim empty lines from beginning and end.
 
 If CAP is non-nil, truncate at CAP."
   (with-current-buffer buffer
@@ -6669,19 +6798,20 @@ If CAP is non-nil, truncate at CAP."
                   lines))
           (forward-line 1)
           (setq current-line (1+ current-line)))
-        ;; Reverse the lines and trim empty lines from start and end
         (let ((reversed-lines (nreverse lines)))
-          ;; Trim empty lines from the beginning
-          (while (and reversed-lines
-                      (string-match-p "^   [0-9]+:[[:space:]]*$" (car reversed-lines)))
-            (setq reversed-lines (cdr reversed-lines)))
-          ;; Trim empty lines from the end
-          (setq reversed-lines (nreverse reversed-lines))
-          (while (and reversed-lines
-                      (string-match-p "^   [0-9]+:[[:space:]]*$" (car reversed-lines)))
-            (setq reversed-lines (cdr reversed-lines)))
-          ;; Reverse back to correct order and apply cap before final join
-          (let ((final-lines (nreverse reversed-lines)))
+          (when trim
+            ;; Trim empty lines from the beginning
+            (while (and reversed-lines
+                        (string-match-p "^   [0-9]+:[[:space:]]*$" (car reversed-lines)))
+              (setq reversed-lines (cdr reversed-lines)))
+            ;; Trim empty lines from the end
+            (setq reversed-lines (nreverse reversed-lines))
+            (while (and reversed-lines
+                        (string-match-p "^   [0-9]+:[[:space:]]*$" (car reversed-lines)))
+              (setq reversed-lines (cdr reversed-lines)))
+            (setq reversed-lines (nreverse reversed-lines)))
+          ;; Apply cap before final join
+          (let ((final-lines reversed-lines))
             (if-let (((and cap (> (length final-lines) cap)))
                      (full-text (string-join final-lines "\n"))
                      (id (gensym "agent-shell-region-")))
@@ -6703,7 +6833,8 @@ If CAP is non-nil, truncate at CAP."
                                                (prop-match-end match))
                                 (goto-char (prop-match-beginning match))
                                 (insert full-text))))))
-                 'agent-shell-region-id id)
+                 'agent-shell-region-id id
+                 'agent-shell-region-text full-text)
               (string-join final-lines "\n"))))))))
 
 
@@ -6734,7 +6865,8 @@ TEXT is the error message."
                                (numbered-region (agent-shell--get-numbered-region
                                                  :buffer buffer
                                                  :from context-beg
-                                                 :to context-end))
+                                                 :to context-end
+                                                 :trim t))
                                ;; Replace the line number prefix for the error line
                                (error-line-prefix (format "   %d:" line))
                                (highlight-prefix (format "-> %d:" line)))
@@ -6936,6 +7068,35 @@ When DEACTIVATE is non-nil, deactivate region/selection."
               content
               "\n"
               "```"))))
+
+(defun agent-shell--block-quote (text)
+  "Return TEXT with each line prefixed by \"> \", displayed as a bar.
+
+Underlying text keeps the \"> \" so it remains valid markdown;
+the bar is a display-only override.  Yanks strip both the bar
+styling and the leading \"> \" so paste gives plain text."
+  (let* ((bar      (propertize "▌" 'face 'font-lock-comment-face))
+         (wrap     (propertize "▌ " 'face 'font-lock-comment-face))
+         (quoted   (concat "> " (replace-regexp-in-string
+                                 (rx "\n") "\n> " text)))
+         (rendered (copy-sequence quoted))
+         (pos      0))
+    (add-text-properties
+     0 (length rendered)
+     (list 'wrap-prefix wrap
+           'face 'font-lock-comment-face
+           'yank-handler
+           (list (lambda (s)
+                   (insert
+                    (replace-regexp-in-string
+                     (rx line-start "> ") ""
+                     (substring-no-properties s))))))
+     rendered)
+    (while (string-match (rx line-start ">") rendered pos)
+      (put-text-property (match-beginning 0) (match-end 0)
+                         'display bar rendered)
+      (setq pos (match-end 0)))
+    rendered))
 
 ;;; Session modes
 
@@ -7671,6 +7832,23 @@ Remove: M-x agent-shell-remove-pending-request
               (append pending (list prompt)))
     (message "Request queued (%d pending)" (length (map-elt agent-shell--state :pending-requests)))))
 
+(cl-defun agent-shell--read-queue-prompt (&key initial)
+  "Read a queue-request prompt from the minibuffer.
+
+When INITIAL is non-nil, prefill the minibuffer with it and leave
+point at the end (ready to type below the prefill).
+
+While reading, @ completes project files and / completes available
+agent commands when the agent has reported them."
+  (let ((shell-buffer (current-buffer)))
+    (minibuffer-with-setup-hook
+        (lambda ()
+          (agent-shell-completion--setup-minibuffer shell-buffer)
+          (when initial
+            (insert initial)))
+      (read-string (or (map-nested-elt (agent-shell--state) '(:agent-config :shell-prompt))
+                       "Enqueue request: ")))))
+
 (defun agent-shell-queue-request (prompt)
   "Queue or immediately send a request depending on shell busy state.
 
@@ -7684,16 +7862,48 @@ commands when the agent has reported them."
    (progn
      (unless (derived-mode-p 'agent-shell-mode)
        (error "Not in a shell"))
-     (let ((shell-buffer (current-buffer)))
-       (list
-        (minibuffer-with-setup-hook
-            (lambda ()
-              (agent-shell-completion--setup-minibuffer shell-buffer))
-          (read-string (or (map-nested-elt (agent-shell--state) '(:agent-config :shell-prompt))
-                           "Enqueue request: ")))))))
+     (list (agent-shell--read-queue-prompt))))
   (if (shell-maker-busy)
       (agent-shell--enqueue-request :prompt prompt)
     (agent-shell--insert-to-shell-buffer :text prompt :submit t :no-focus t)))
+
+(defun agent-shell-quote-region ()
+  "Quote the active region into the shell's latest prompt.
+
+If point is at the last prompt, behave as regular editing (typing
+the originating key) so the user can type `r' as plain input.
+
+Otherwise, when a region is active, wrap it as a Markdown block quote.
+If the shell is not busy, insert the quote at the latest prompt with
+point left below it, ready to type.  If the shell is busy, read a
+follow-up request in the minibuffer prefilled with the block quote
+and queue it via `agent-shell-queue-request'."
+  (declare (modes agent-shell-mode))
+  (interactive)
+  (unless (derived-mode-p 'agent-shell-mode)
+    (error "Not in a shell"))
+  (cond
+   ;; At prompt + not busy: behave as regular editing.
+   ((and (not (shell-maker-busy))
+         (shell-maker-point-at-last-prompt-p)
+         (integerp last-command-event)
+         (> (length (this-command-keys-vector)) 0)
+         (eq (key-binding (this-command-keys-vector)) this-command))
+    (self-insert-command 1))
+   ;; Region active and not at prompt: quote into prompt or queue.
+   ((and (not (shell-maker-point-at-last-prompt-p))
+         (region-active-p))
+    (let ((quoted (agent-shell--block-quote
+                   (string-trim
+                    (map-elt (agent-shell--get-region :deactivate t) :content)))))
+      (if (shell-maker-busy)
+          (agent-shell-queue-request
+           (agent-shell--read-queue-prompt :initial (concat "\n\n" quoted "\n\n")))
+        (goto-char (point-max))
+        (insert "\n\n" quoted "\n\n"))))
+   ;; Otherwise: fall back to self-insert.
+   (t
+    (self-insert-command 1))))
 
 (defun agent-shell-resume-pending-requests ()
   "Resume processing pending requests in the queue."

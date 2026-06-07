@@ -33,6 +33,8 @@
 (require 'subr-x)
 (require 'window)
 (require 'flymake)
+(require 'agent-shell-list-edit)
+(require 'agent-shell-markdown)
 (require 'markdown-overlays)
 (require 'shell-maker)
 (require 'transient)
@@ -40,6 +42,7 @@
 (eval-when-compile
   (require 'cl-lib))
 
+(declare-function agent-shell--block-quote "agent-shell")
 (declare-function agent-shell--current-shell "agent-shell")
 (declare-function agent-shell--display-buffer "agent-shell")
 (declare-function agent-shell--next-command-and-response "agent-shell")
@@ -212,9 +215,11 @@ Returns an alist with insertion details or nil otherwise:
         (viewport-buffer (current-buffer))
         (prompt (buffer-string)))
     (with-current-buffer shell-buffer
-      (agent-shell--insert-to-shell-buffer
-       :text prompt
-       :submit t))
+      (if (agent-shell-viewport--busy-p)
+          (agent-shell-queue-request prompt)
+        (agent-shell--insert-to-shell-buffer
+         :text prompt
+         :submit t)))
     (kill-buffer viewport-buffer)
     (pop-to-buffer shell-buffer)))
 
@@ -228,19 +233,15 @@ Returns an alist with insertion details or nil otherwise:
     (let ((shell-buffer (agent-shell-viewport--shell-buffer))
           (viewport-buffer (current-buffer))
           (prompt (string-trim (buffer-string))))
-      (when (agent-shell-viewport--busy-p)
-        (unless (agent-shell-interrupt-confirmed-p)
-          (throw 'exit nil))
-        (with-current-buffer shell-buffer
-          (agent-shell-interrupt t))
-        (with-current-buffer viewport-buffer
-          (agent-shell-viewport-view-mode)
-          (agent-shell-viewport--initialize
-           :prompt prompt))
-        (user-error "Aborted"))
       (when (string-empty-p (string-trim prompt))
         (agent-shell-viewport--initialize)
         (user-error "Nothing to send"))
+      (when (agent-shell-viewport--busy-p)
+        (with-current-buffer shell-buffer
+          (agent-shell-queue-request prompt))
+        (with-current-buffer viewport-buffer
+          (agent-shell-viewport-view-last))
+        (throw 'exit nil))
       (if (derived-mode-p 'agent-shell-viewport-view-mode)
           (progn
             (agent-shell-viewport-edit-mode)
@@ -517,83 +518,91 @@ Optionally set its PROMPT and RESPONSE."
 (defun agent-shell-viewport-next-item ()
   "Go to next item.
 
-If at point-max, attempt to switch to next interaction."
+When point is inside a rendered markdown table, navigate to the
+next table cell instead.  If at point-max, attempt to switch to
+next interaction."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
   (unless (derived-mode-p 'agent-shell-viewport-view-mode)
     (error "Not in a viewport buffer"))
-  (let* ((current-pos (point))
-         (prompt-start (agent-shell-viewport--prompt-start))
-         (response-start (agent-shell-viewport--response-start))
-         (block-pos (save-mark-and-excursion
-                      (agent-shell-ui-forward-block)))
-         (button-pos (save-mark-and-excursion
-                       (agent-shell-next-permission-button)))
-         ;; Filter positions to only those after current position
-         (candidates (delq nil (list
-                                (when (and prompt-start (> prompt-start current-pos))
-                                  prompt-start)
-                                (when (and response-start (> response-start current-pos))
-                                  response-start)
-                                block-pos
-                                button-pos)))
-         (next-pos (if candidates
-                       (apply #'min candidates)
-                     ;; No more items, try point-max if not already there
-                     (when (< current-pos (point-max))
-                       (point-max)))))
-    (if next-pos
-        (progn
-          (deactivate-mark)
-          (goto-char next-pos))
-      ;; At point-max with no more items, try next interaction
-      (condition-case nil
-          (agent-shell-viewport-next-page)
-        (error
-         ;; At the end of all interactions, stay at point-max
-         nil)))))
+  (if (get-text-property (point) 'agent-shell-markdown-table-source)
+      (agent-shell-markdown-table-next-cell)
+    (let* ((current-pos (point))
+           (prompt-start (agent-shell-viewport--prompt-start))
+           (response-start (agent-shell-viewport--response-start))
+           (block-pos (save-mark-and-excursion
+                        (agent-shell-ui-forward-block)))
+           (button-pos (save-mark-and-excursion
+                         (agent-shell-next-permission-button)))
+           ;; Filter positions to only those after current position
+           (candidates (delq nil (list
+                                  (when (and prompt-start (> prompt-start current-pos))
+                                    prompt-start)
+                                  (when (and response-start (> response-start current-pos))
+                                    response-start)
+                                  block-pos
+                                  button-pos)))
+           (next-pos (if candidates
+                         (apply #'min candidates)
+                       ;; No more items, try point-max if not already there
+                       (when (< current-pos (point-max))
+                         (point-max)))))
+      (if next-pos
+          (progn
+            (deactivate-mark)
+            (goto-char next-pos))
+        ;; At point-max with no more items, try next interaction
+        (condition-case nil
+            (agent-shell-viewport-next-page)
+          (error
+           ;; At the end of all interactions, stay at point-max
+           nil))))))
 
 (defun agent-shell-viewport-previous-item ()
   "Go to previous item.
 
-If at the first item, attempt to switch to previous interaction."
+When point is inside a rendered markdown table, navigate to the
+previous table cell instead.  If at the first item, attempt to
+switch to previous interaction."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
   (unless (derived-mode-p 'agent-shell-viewport-view-mode)
     (error "Not in a viewport buffer"))
-  (let* ((current-pos (point))
-         (prompt-start (agent-shell-viewport--prompt-start))
-         (response-start (agent-shell-viewport--response-start))
-         (block-pos (save-mark-and-excursion
-                      (let ((pos (agent-shell-ui-backward-block)))
-                        (when (and pos (< pos current-pos))
-                          pos))))
-         (button-pos (save-mark-and-excursion
-                       (let ((pos (agent-shell-previous-permission-button)))
-                         (when (and pos (< pos current-pos))
-                           pos))))
-         ;; Filter positions to only those before current position
-         (candidates (delq nil (list
-                                (when (and prompt-start (< prompt-start current-pos))
-                                  prompt-start)
-                                (when (and response-start (< response-start current-pos))
-                                  response-start)
-                                block-pos
-                                button-pos)))
-         (next-pos (when candidates
-                     (apply #'max candidates))))
-    (if next-pos
-        (progn
-          (deactivate-mark)
-          (goto-char next-pos))
-      ;; No more items before current position, try previous interaction
-      (condition-case nil
-          ;; Switch to previous page and stop at point-max (call next-interaction directly)
-          (agent-shell-viewport-next-page :backwards t)
-        (error
-         ;; At the beginning of all interactions, stay at first item
-         (when prompt-start
-           (goto-char prompt-start)))))))
+  (if (get-text-property (point) 'agent-shell-markdown-table-source)
+      (agent-shell-markdown-table-previous-cell)
+    (let* ((current-pos (point))
+           (prompt-start (agent-shell-viewport--prompt-start))
+           (response-start (agent-shell-viewport--response-start))
+           (block-pos (save-mark-and-excursion
+                        (let ((pos (agent-shell-ui-backward-block)))
+                          (when (and pos (< pos current-pos))
+                            pos))))
+           (button-pos (save-mark-and-excursion
+                         (let ((pos (agent-shell-previous-permission-button)))
+                           (when (and pos (< pos current-pos))
+                             pos))))
+           ;; Filter positions to only those before current position
+           (candidates (delq nil (list
+                                  (when (and prompt-start (< prompt-start current-pos))
+                                    prompt-start)
+                                  (when (and response-start (< response-start current-pos))
+                                    response-start)
+                                  block-pos
+                                  button-pos)))
+           (next-pos (when candidates
+                       (apply #'max candidates))))
+      (if next-pos
+          (progn
+            (deactivate-mark)
+            (goto-char next-pos))
+        ;; No more items before current position, try previous interaction
+        (condition-case nil
+            ;; Switch to previous page and stop at point-max (call next-interaction directly)
+            (agent-shell-viewport-next-page :backwards t)
+          (error
+           ;; At the beginning of all interactions, stay at first item
+           (when prompt-start
+             (goto-char prompt-start))))))))
 
 (defconst agent-shell-viewport--suffix " [viewport]"
   "Suffix appended to shell buffer name to create viewport buffer name.")
@@ -616,35 +625,6 @@ With EXISTING-ONLY, only return existing buffers without creating."
               (agent-shell-viewport-edit-mode)
               (current-buffer))))))))
 
-(defun agent-shell-viewport--block-quote (text)
-  "Return TEXT with each line prefixed by \"> \", displayed as a bar.
-
-Underlying text keeps the \"> \" so it remains valid markdown;
-the bar is a display-only override.  Yanks strip both the bar
-styling and the leading \"> \" so paste gives plain text."
-  (let* ((bar      (propertize "▌" 'face 'font-lock-comment-face))
-         (wrap     (propertize "▌ " 'face 'font-lock-comment-face))
-         (quoted   (concat "> " (replace-regexp-in-string
-                                 (rx "\n") "\n> " text)))
-         (rendered (copy-sequence quoted))
-         (pos      0))
-    (add-text-properties
-     0 (length rendered)
-     (list 'wrap-prefix wrap
-           'face 'font-lock-comment-face
-           'yank-handler
-           (list (lambda (s)
-                   (insert
-                    (replace-regexp-in-string
-                     (rx line-start "> ") ""
-                     (substring-no-properties s))))))
-     rendered)
-    (while (string-match (rx line-start ">") rendered pos)
-      (put-text-property (match-beginning 0) (match-end 0)
-                         'display bar rendered)
-      (setq pos (match-end 0)))
-    rendered))
-
 (cl-defun agent-shell-viewport--setup-reply (&key quoted-text)
   "Set up the buffer to compose a reply.
 
@@ -660,7 +640,7 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
     (when quoted-text
       (goto-char (point-max))
       (insert (if snapshot "\n\n" "")
-              (agent-shell-viewport--block-quote quoted-text) "\n\n"))
+              (agent-shell--block-quote quoted-text) "\n\n"))
     ;; Skip past any cursor-intangible layout text (e.g. the
     ;; newline inserted by `agent-shell-viewport--initialize')
     ;; so callers like `agent-shell-viewport-reply-1' can insert.
@@ -675,8 +655,6 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   (interactive)
   (unless (derived-mode-p 'agent-shell-viewport-view-mode)
     (user-error "Not in a shell viewport buffer"))
-  (when (agent-shell-viewport--busy-p)
-    (user-error "Busy, please wait"))
   (let ((region (map-elt (agent-shell--get-region :deactivate t) :content)))
     (agent-shell-viewport--setup-reply
      :quoted-text (when region (string-trim region))))
@@ -699,6 +677,8 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   "Reply with \"yes\" and send immediately."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
+  (when (agent-shell-viewport--busy-p)
+    (user-error "Busy, please wait"))
   (agent-shell-viewport-reply)
   (insert "yes")
   (agent-shell-viewport-compose-send))
@@ -707,6 +687,8 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   "Reply with \"1\" and send immediately."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
+  (when (agent-shell-viewport--busy-p)
+    (user-error "Busy, please wait"))
   (agent-shell-viewport-reply)
   (insert "1")
   (agent-shell-viewport-compose-send))
@@ -715,6 +697,8 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   "Reply with \"2\" and send immediately."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
+  (when (agent-shell-viewport--busy-p)
+    (user-error "Busy, please wait"))
   (agent-shell-viewport-reply)
   (insert "2")
   (agent-shell-viewport-compose-send))
@@ -723,6 +707,8 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   "Reply with \"3\" and send immediately."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
+  (when (agent-shell-viewport--busy-p)
+    (user-error "Busy, please wait"))
   (agent-shell-viewport-reply)
   (insert "3")
   (agent-shell-viewport-compose-send))
@@ -731,6 +717,8 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   "Reply with \"4\" and send immediately."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
+  (when (agent-shell-viewport--busy-p)
+    (user-error "Busy, please wait"))
   (agent-shell-viewport-reply)
   (insert "4")
   (agent-shell-viewport-compose-send))
@@ -739,6 +727,8 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   "Reply with \"5\" and send immediately."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
+  (when (agent-shell-viewport--busy-p)
+    (user-error "Busy, please wait"))
   (agent-shell-viewport-reply)
   (insert "5")
   (agent-shell-viewport-compose-send))
@@ -747,6 +737,8 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   "Reply with \"6\" and send immediately."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
+  (when (agent-shell-viewport--busy-p)
+    (user-error "Busy, please wait"))
   (agent-shell-viewport-reply)
   (insert "6")
   (agent-shell-viewport-compose-send))
@@ -755,6 +747,8 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   "Reply with \"7\" and send immediately."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
+  (when (agent-shell-viewport--busy-p)
+    (user-error "Busy, please wait"))
   (agent-shell-viewport-reply)
   (insert "7")
   (agent-shell-viewport-compose-send))
@@ -763,6 +757,8 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   "Reply with \"8\" and send immediately."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
+  (when (agent-shell-viewport--busy-p)
+    (user-error "Busy, please wait"))
   (agent-shell-viewport-reply)
   (insert "8")
   (agent-shell-viewport-compose-send))
@@ -771,6 +767,8 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   "Reply with \"9\" and send immediately."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
+  (when (agent-shell-viewport--busy-p)
+    (user-error "Busy, please wait"))
   (agent-shell-viewport-reply)
   (insert "9")
   (agent-shell-viewport-compose-send))
@@ -779,6 +777,8 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   "Reply with \"more\" and send immediately."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
+  (when (agent-shell-viewport--busy-p)
+    (user-error "Busy, please wait"))
   (agent-shell-viewport-reply)
   (insert "more")
   (agent-shell-viewport-compose-send))
@@ -787,6 +787,8 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   "Reply with \"again\" and send immediately."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
+  (when (agent-shell-viewport--busy-p)
+    (user-error "Busy, please wait"))
   (agent-shell-viewport-reply)
   (insert "again")
   (agent-shell-viewport-compose-send))
@@ -795,6 +797,8 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   "Reply with \"continue\" and send immediately."
   (declare (modes agent-shell-viewport-view-mode))
   (interactive)
+  (when (agent-shell-viewport--busy-p)
+    (user-error "Busy, please wait"))
   (agent-shell-viewport-reply)
   (insert "continue")
   (agent-shell-viewport-compose-send))
@@ -862,8 +866,8 @@ buffer from the snapshot and switch to edit mode."
   (let* ((shell-buffer (or (agent-shell--current-shell)
                            (user-error "Not in an agent-shell buffer")))
          (viewport-buffer (agent-shell-viewport--buffer
-                          :shell-buffer shell-buffer
-                          :existing-only t)))
+                           :shell-buffer shell-buffer
+                           :existing-only t)))
     (with-current-buffer shell-buffer
       (agent-shell-set-session-model
        (lambda ()
@@ -879,8 +883,8 @@ buffer from the snapshot and switch to edit mode."
   (let* ((shell-buffer (or (agent-shell--current-shell)
                            (user-error "Not in an agent-shell buffer")))
          (viewport-buffer (agent-shell-viewport--buffer
-                          :shell-buffer shell-buffer
-                          :existing-only t)))
+                           :shell-buffer shell-buffer
+                           :existing-only t)))
     (with-current-buffer shell-buffer
       (agent-shell-set-session-mode
        (lambda ()
@@ -915,8 +919,8 @@ buffer from the snapshot and switch to edit mode."
   (let* ((shell-buffer (or (agent-shell--current-shell)
                            (user-error "Not in an agent-shell buffer")))
          (viewport-buffer (agent-shell-viewport--buffer
-                          :shell-buffer shell-buffer
-                          :existing-only t)))
+                           :shell-buffer shell-buffer
+                           :existing-only t)))
     (with-current-buffer shell-buffer
       (agent-shell-cycle-session-mode
        (lambda ()
@@ -1110,9 +1114,10 @@ VIEWPORT-BUFFER is the viewport buffer to check."
               (apply #'vector ""
                      (agent-shell-viewport--make-transient-group
                       agent-shell-viewport-view-mode-map
-                      '(((:function . agent-shell-viewport-reply)
-                         (:description . "Reply…")
-                         (:if-not . agent-shell-viewport--busy-p))
+                      `(((:function . agent-shell-viewport-reply)
+                         (:description . ,(if (agent-shell-viewport--busy-p)
+                                              "Queue reply…"
+                                            "Reply…")))
                         ((:function . agent-shell-viewport-quote-reply)
                          (:description . "Quote reply…")
                          (:if-not . agent-shell-viewport--busy-p))
@@ -1250,6 +1255,9 @@ major mode."
                   (list (cons :current 1) (cons :total 1))))
          (position-label (format "%d/%d" (map-elt pos :current) (map-elt pos :total)))
          (status (cond
+                  ((and (agent-shell-viewport--busy-p)
+                        (derived-mode-p 'agent-shell-viewport-edit-mode))
+                   (propertize "Edit (queue)" 'face 'success))
                   ((agent-shell-viewport--busy-p) (propertize "Busy" 'face 'warning))
                   ((derived-mode-p 'agent-shell-viewport-edit-mode)
                    (propertize "Edit" 'face 'success))
@@ -1285,12 +1293,13 @@ major mode."
                                                     'agent-shell-viewport-previous-item
                                                     agent-shell-viewport-view-mode-map t)))
                          (:description . "Previous")))
-                      (unless (agent-shell-viewport--busy-p)
-                        (list
-                         `((:key . ,(key-description (where-is-internal
-                                                      'agent-shell-viewport-reply
-                                                      agent-shell-viewport-view-mode-map t)))
-                           (:description . "Reply…"))))
+                      (list
+                       `((:key . ,(key-description (where-is-internal
+                                                    'agent-shell-viewport-reply
+                                                    agent-shell-viewport-view-mode-map t)))
+                         (:description . ,(if (agent-shell-viewport--busy-p)
+                                              "Queue reply…"
+                                            "Reply…"))))
                       (when (agent-shell-viewport--busy-p)
                         (list
                          `((:key . ,(key-description (where-is-internal
@@ -1380,6 +1389,7 @@ For example, offer to kill associated shell session."
   (setq buffer-read-only nil)
   (when agent-shell-file-completion-enabled
     (agent-shell-completion-mode +1))
+  (agent-shell-list-edit-mode +1)
   (agent-shell-viewport--update-header)
   (let ((inhibit-read-only t))
     (erase-buffer))
